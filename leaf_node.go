@@ -3,7 +3,10 @@ package btreestore
 import (
 	"encoding/binary"
 	"fmt"
+	"sort"
 )
+
+var ErrorOverFlow = fmt.Errorf("overflow error")
 
 type keyValue struct {
 	key   string
@@ -48,8 +51,19 @@ const LeafNodeType NodeType = 1
 const InternalNodeType NodeType = 2
 
 type LeafNode struct {
-	kv         []keyValue
-	nextPageID uint64
+	kv             []keyValue
+	nextPageID     uint64
+	slotOffset     uint16
+	freePageOffset uint16
+}
+
+func newLeafNode() *LeafNode {
+	return &LeafNode{
+		kv:             make([]keyValue, 0),
+		nextPageID:     0,
+		slotOffset:     slotDirStart,
+		freePageOffset: pageEnd,
+	}
 }
 
 func (ln *LeafNode) encode() ([]byte, error) {
@@ -71,7 +85,8 @@ func (ln *LeafNode) encode() ([]byte, error) {
 		keyValueStartingOffset := freePagePointer - len(keyValBuff)
 
 		if keyValueStartingOffset < (slotPointer + 2) {
-			return nil, fmt.Errorf("overflow error")
+
+			return nil, ErrorOverFlow
 		}
 
 		copy(page[keyValueStartingOffset:freePagePointer], keyValBuff)
@@ -82,17 +97,55 @@ func (ln *LeafNode) encode() ([]byte, error) {
 	}
 
 	binary.BigEndian.PutUint16(page[freePageStart:nextPageIdStart], uint16(freePagePointer))
+
 	return page, nil
+}
+
+func (ln *LeafNode) search(key string) (int, bool) {
+	index := sort.Search(len(ln.kv), func(i int) bool {
+		return ln.kv[i].key >= key
+	})
+	return index, index < len(ln.kv) && ln.kv[index].key == key
+}
+
+func (ln *LeafNode) insert(key string, value string) (bool, error) {
+	index, ok := ln.search(key)
+	pageFreeSpace := int(ln.freePageOffset) - int(ln.slotOffset)
+	if ok {
+		additionalSpace := len(value) - len(ln.kv[index].value)
+		if additionalSpace > pageFreeSpace {
+			return false, ErrorOverFlow
+		}
+		newFreePageOffset := int(ln.freePageOffset) - additionalSpace
+		ln.freePageOffset = uint16(newFreePageOffset)
+		ln.kv[index].value = value
+		return true, nil
+	}
+	requiredSpace := len(key) + len(value) + kvLengthStoreSize + kvLengthStoreSize + 2
+
+	if requiredSpace > pageFreeSpace {
+		return false, ErrorOverFlow
+	}
+	oldKv := ln.kv
+	kv := make([]keyValue, len(oldKv)+1)
+	copy(kv[0:index], oldKv[0:index])
+	kv[index] = keyValue{key, value}
+	copy(kv[index+1:], oldKv[index:])
+	ln.kv = kv
+	ln.freePageOffset = ln.freePageOffset - uint16(requiredSpace-2)
+	ln.slotOffset = ln.slotOffset + 2
+
+	return true, nil
 }
 
 func decode(page []byte) (*LeafNode, error) {
 
 	//pageType := byte(page[pageTypeStart])
 	keyCount := binary.BigEndian.Uint16(page[keyCountStart:freePageStart])
-	// page[3:5] = free page offset, comes later
 	nextPageId := binary.BigEndian.Uint64(page[nextPageIdStart:slotDirStart])
 
 	node := LeafNode{nextPageID: nextPageId, kv: make([]keyValue, keyCount)}
+	node.freePageOffset = binary.BigEndian.Uint16(page[freePageStart:nextPageIdStart])
 	slotPointer := slotDirStart
 	for i := 0; i < int(keyCount); i++ {
 		kvOffset := binary.BigEndian.Uint16(page[slotPointer : slotPointer+2])
@@ -100,6 +153,7 @@ func decode(page []byte) (*LeafNode, error) {
 		node.kv[i] = kv
 		slotPointer += 2
 	}
+	node.slotOffset = uint16(slotPointer)
 	return &node, nil
 }
 
