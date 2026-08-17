@@ -16,24 +16,24 @@ var InvalidPageIDError = errors.New("page id can not be greater than the page co
 const DIR = "store"
 const FilePrefix = "btree"
 
-func newPager(path string) *Pager {
+func newPager(path string) (*Pager, error) {
 	err := os.MkdirAll(DIR, 0o755)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	stat, err := file.Stat()
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	fileSize := stat.Size()
 	return &Pager{
 		file:        file,
 		pageCounter: uint64(fileSize / pageSize),
-	}
+	}, nil
 }
 
 func (p *Pager) readPage(pageID uint64) ([]byte, error) {

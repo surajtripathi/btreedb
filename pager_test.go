@@ -10,7 +10,7 @@ import (
 
 func TestPagerWriteAndRead(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FilePrefix+".btree")
-	pager := newPager(path)
+	pager, _ := newPager(path)
 	node := newLeafNode()
 	ok, err := node.insert("key1", "value1")
 	if err != nil || ok != true {
@@ -49,7 +49,7 @@ func TestPagerWriteAndRead(t *testing.T) {
 
 func TestAllocatePageSequencing(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FilePrefix+".btree")
-	pager := newPager(path)
+	pager, _ := newPager(path)
 	pageID1 := pager.allocatePage()
 	pageID2 := pager.allocatePage()
 	pageID3 := pager.allocatePage()
@@ -63,7 +63,7 @@ func TestAllocatePageSequencing(t *testing.T) {
 
 func TestReadPageInvalidPageID(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FilePrefix+".btree")
-	pager := newPager(path)
+	pager, _ := newPager(path)
 	_, err := pager.readPage(0)
 	if !errors.Is(err, InvalidPageIDError) {
 		t.Errorf("should have thrown error as page id is invalid %d", 0)
@@ -82,7 +82,7 @@ func TestReadPageInvalidPageID(t *testing.T) {
 
 func TestWritePageWithWrongBuffer(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FilePrefix+".btree")
-	pager := newPager(path)
+	pager, _ := newPager(path)
 	pageID1 := pager.allocatePage()
 	buff := make([]byte, 100)
 	err := pager.writePage(buff, pageID1)
@@ -110,7 +110,7 @@ func TestPagerPersistedAcrossMultipleInstance(t *testing.T) {
 	}
 	path := filepath.Join(t.TempDir(), FilePrefix+".btree")
 
-	pagerInstance1 := newPager(path)
+	pagerInstance1, _ := newPager(path)
 
 	pageID1 := pagerInstance1.allocatePage()
 	encode1, err := node1.encode()
@@ -151,7 +151,7 @@ func TestPagerPersistedAcrossMultipleInstance(t *testing.T) {
 		t.Errorf("error closing page: %v", err)
 	}
 
-	pagerInstance2 := newPager(path)
+	pagerInstance2, _ := newPager(path)
 	page1Encoded, err := pagerInstance2.readPage(pageID1)
 	if err != nil {
 		t.Errorf("error reading page: %v", err)

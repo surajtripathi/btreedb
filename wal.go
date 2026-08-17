@@ -114,7 +114,7 @@ func encodeRecord(rec WalRecord) []byte {
 // fn for each one, in order. It stops (without error) the moment it
 // hits a short read or a checksum mismatch, since that's exactly what
 // a torn write from a mid-append crash looks like.
-func Replay(path string, fn func(WalRecord)) error {
+func Replay(path string, fn func(WalRecord) error) error {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return nil
@@ -155,7 +155,10 @@ func Replay(path string, fn func(WalRecord)) error {
 		if err != nil {
 			return nil
 		}
-		fn(rec)
+
+		if err := fn(rec); err != nil {
+			return err
+		}
 	}
 }
 

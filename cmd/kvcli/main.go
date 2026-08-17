@@ -20,8 +20,13 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path"
 	"strings"
 )
+
+const dir = "store"
+const filePrefix = "btree"
+const walPath = "data.wal"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -29,7 +34,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	store, err := btreestore.Open(os.Args[1])
+	store, err := btreestore.Open(path.Join(dir, filePrefix+".btree"))
 	if err != nil {
 		fmt.Println("failed to open store:", err)
 		os.Exit(1)
