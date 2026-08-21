@@ -66,7 +66,7 @@ func newLeafNode() *LeafNode {
 	}
 }
 
-func (ln *LeafNode) encode() ([]byte, error) {
+func (ln *LeafNode) encodeLeaf() ([]byte, error) {
 	page := make([]byte, pageSize)
 
 	page[pageTypeStart] = byte(LeafNodeType)
@@ -80,7 +80,7 @@ func (ln *LeafNode) encode() ([]byte, error) {
 	slotPointer := slotDirStart
 	freePagePointer := pageEnd
 	for _, kv := range ln.kv {
-		keyValBuff := encodeKeyValue(kv.key, kv.value)
+		keyValBuff := encodeKeyValueLeaf(kv.key, kv.value)
 
 		keyValueStartingOffset := freePagePointer - len(keyValBuff)
 
@@ -101,15 +101,15 @@ func (ln *LeafNode) encode() ([]byte, error) {
 	return page, nil
 }
 
-func (ln *LeafNode) search(key string) (int, bool) {
+func (ln *LeafNode) searchLeaf(key string) (int, bool) {
 	index := sort.Search(len(ln.kv), func(i int) bool {
 		return ln.kv[i].key >= key
 	})
 	return index, index < len(ln.kv) && ln.kv[index].key == key
 }
 
-func (ln *LeafNode) insert(key string, value string) (bool, error) {
-	index, ok := ln.search(key)
+func (ln *LeafNode) insertLeaf(key string, value string) (bool, error) {
+	index, ok := ln.searchLeaf(key)
 	pageFreeSpace := int(ln.freePageOffset) - int(ln.slotOffset)
 	if ok {
 		additionalSpace := len(value) - len(ln.kv[index].value)
@@ -138,7 +138,7 @@ func (ln *LeafNode) insert(key string, value string) (bool, error) {
 	return true, nil
 }
 
-func decode(page []byte) (*LeafNode, error) {
+func decodeLeaf(page []byte) (*LeafNode, error) {
 
 	//pageType := byte(page[pageTypeStart])
 	keyCount := binary.BigEndian.Uint16(page[keyCountStart:freePageStart])
@@ -149,7 +149,7 @@ func decode(page []byte) (*LeafNode, error) {
 	slotPointer := slotDirStart
 	for i := 0; i < int(keyCount); i++ {
 		kvOffset := binary.BigEndian.Uint16(page[slotPointer : slotPointer+2])
-		kv := decodeKeyValue(page, kvOffset)
+		kv := decodeKeyValueLeaf(page, kvOffset)
 		node.kv[i] = kv
 		slotPointer += 2
 	}
@@ -161,7 +161,7 @@ func decode(page []byte) (*LeafNode, error) {
 keyLen(2) + key + valLen(2) + val
 */
 
-func encodeKeyValue(key string, value string) []byte {
+func encodeKeyValueLeaf(key string, value string) []byte {
 
 	buffer := make([]byte, kvLengthStoreSize+len(key)+kvLengthStoreSize+len(value))
 	offset := 0
@@ -178,7 +178,7 @@ func encodeKeyValue(key string, value string) []byte {
 	return buffer
 }
 
-func decodeKeyValue(page []byte, offset uint16) keyValue {
+func decodeKeyValueLeaf(page []byte, offset uint16) keyValue {
 	kvOff := offset
 	keyLen := binary.BigEndian.Uint16(page[kvOff : kvOff+kvLengthStoreSize])
 	kvOff += kvLengthStoreSize

@@ -12,11 +12,11 @@ func TestPagerWriteAndRead(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FilePrefix+".btree")
 	pager, _ := newPager(path)
 	node := newLeafNode()
-	ok, err := node.insert("key1", "value1")
+	ok, err := node.insertLeaf("key1", "value1")
 	if err != nil || ok != true {
 		t.Errorf("error inserting key: %v, ok: %v", err, ok)
 	}
-	encode, err := node.encode()
+	encode, err := node.encodeLeaf()
 	if err != nil {
 		t.Errorf("error encoding node: %v", err)
 	}
@@ -31,11 +31,11 @@ func TestPagerWriteAndRead(t *testing.T) {
 		t.Errorf("error reading page: %v", err)
 	}
 
-	decodedNode, err := decode(buff)
+	decodedNode, err := decodeLeaf(buff)
 	if err != nil {
 		t.Errorf("error decoding node: %v", err)
 	}
-	index, ok := decodedNode.search("key1")
+	index, ok := decodedNode.searchLeaf("key1")
 	if ok != true {
 		t.Errorf("error searching key1: %v", ok)
 	}
@@ -96,15 +96,15 @@ func TestPagerPersistedAcrossMultipleInstance(t *testing.T) {
 	node2 := newLeafNode()
 	node3 := newLeafNode()
 
-	_, err := node1.insert("key1", "value1")
+	_, err := node1.insertLeaf("key1", "value1")
 	if err != nil {
 		t.Errorf("error inserting key: %v", err)
 	}
-	_, err = node2.insert("key2", "value2")
+	_, err = node2.insertLeaf("key2", "value2")
 	if err != nil {
 		t.Errorf("error inserting key: %v", err)
 	}
-	_, err = node3.insert("key3", "value3")
+	_, err = node3.insertLeaf("key3", "value3")
 	if err != nil {
 		t.Errorf("error inserting key: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestPagerPersistedAcrossMultipleInstance(t *testing.T) {
 	pagerInstance1, _ := newPager(path)
 
 	pageID1 := pagerInstance1.allocatePage()
-	encode1, err := node1.encode()
+	encode1, err := node1.encodeLeaf()
 	if err != nil {
 		t.Errorf("error encoding node: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestPagerPersistedAcrossMultipleInstance(t *testing.T) {
 	}
 
 	pageID2 := pagerInstance1.allocatePage()
-	encode2, err := node2.encode()
+	encode2, err := node2.encodeLeaf()
 	if err != nil {
 		t.Errorf("error encoding node: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestPagerPersistedAcrossMultipleInstance(t *testing.T) {
 	}
 
 	pageID3 := pagerInstance1.allocatePage()
-	encode3, err := node3.encode()
+	encode3, err := node3.encodeLeaf()
 	if err != nil {
 		t.Errorf("error encoding node: %v", err)
 	}

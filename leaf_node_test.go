@@ -40,13 +40,13 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 	node.kv = append(node.kv, keyValue{key: "hello2", value: "world2"})
 	node.kv = append(node.kv, keyValue{key: "hello3", value: "world3"})
 
-	encodedPage, err := node.encode()
+	encodedPage, err := node.encodeLeaf()
 
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	decodedNode, err := decode(encodedPage)
+	decodedNode, err := decodeLeaf(encodedPage)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,11 +71,11 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 // — zero entries.
 func TestEncodeDecodeEmptyNode(t *testing.T) {
 	node := newLeafNode()
-	encodedPage, err := node.encode()
+	encodedPage, err := node.encodeLeaf()
 	if err != nil {
 		t.Fatal(err)
 	}
-	decodedNode, err := decode(encodedPage)
+	decodedNode, err := decodeLeaf(encodedPage)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,11 +97,11 @@ func TestEncodeDecodeEmptyValue(t *testing.T) {
 	node := newLeafNode()
 
 	node.kv = append(node.kv, keyValue{key: "hello1"})
-	encodedPage, err := node.encode()
+	encodedPage, err := node.encodeLeaf()
 	if err != nil {
 		t.Fatal(err)
 	}
-	decodedNode, err := decode(encodedPage)
+	decodedNode, err := decodeLeaf(encodedPage)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestEncodeOverflow(t *testing.T) {
 		node.kv = append(node.kv, keyValue{key: strconv.Itoa(i), value: strconv.Itoa(i)})
 	}
 
-	_, err := node.encode()
+	_, err := node.encodeLeaf()
 	if err == nil || err.Error() != "overflow error" {
 		t.Fatalf("Should have thrown overflow error")
 	}
@@ -143,7 +143,7 @@ func TestLeafNodeSearch(t *testing.T) {
 	node.kv = append(node.kv, keyValue{key: "hello2", value: "world2"})
 	node.kv = append(node.kv, keyValue{key: "hello3", value: "world3"})
 
-	index, ok := node.search("hello1")
+	index, ok := node.searchLeaf("hello1")
 	if !ok {
 		t.Fatalf("key not found %d", index)
 	}
@@ -155,7 +155,7 @@ func TestLeafNodeSearch(t *testing.T) {
 		t.Fatalf("key should be 'hello1', got %s", node.kv[index].key)
 	}
 
-	index, ok = node.search("hello2")
+	index, ok = node.searchLeaf("hello2")
 	if !ok {
 		t.Fatal("key not found")
 	}
@@ -167,7 +167,7 @@ func TestLeafNodeSearch(t *testing.T) {
 		t.Fatalf("key should be 'hello1', got %s", node.kv[index].key)
 	}
 
-	index, ok = node.search("hello3")
+	index, ok = node.searchLeaf("hello3")
 	if !ok {
 		t.Fatal("key not found")
 	}
@@ -179,7 +179,7 @@ func TestLeafNodeSearch(t *testing.T) {
 		t.Fatalf("key should be 'hello1', got %s", node.kv[index].key)
 	}
 
-	index, ok = node.search("hello11")
+	index, ok = node.searchLeaf("hello11")
 	if ok {
 		t.Fatal("key not found")
 	}
@@ -195,7 +195,7 @@ func TestLeafNodeSearch(t *testing.T) {
 func TestLeafNodeInsertIntoEmptyNode(t *testing.T) {
 	node := newLeafNode()
 
-	ok, err := node.insert("hello11", "value11")
+	ok, err := node.insertLeaf("hello11", "value11")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,17 +213,17 @@ func TestLeafNodeInsertIntoFrontMiddleAndEnd(t *testing.T) {
 	node := newLeafNode()
 
 	// inset empty
-	ok, err := node.insert("hello1", "value1")
-	ok, err = node.insert("hello2", "value2")
-	ok, err = node.insert("hello3", "value3")
-	ok, err = node.insert("hello4", "value4")
-	ok, err = node.insert("hello5", "value5")
+	ok, err := node.insertLeaf("hello1", "value1")
+	ok, err = node.insertLeaf("hello2", "value2")
+	ok, err = node.insertLeaf("hello3", "value3")
+	ok, err = node.insertLeaf("hello4", "value4")
+	ok, err = node.insertLeaf("hello5", "value5")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// insert front
-	ok, err = node.insert("hello0", "value0")
+	ok, err = node.insertLeaf("hello0", "value0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestLeafNodeInsertIntoFrontMiddleAndEnd(t *testing.T) {
 		t.Fatalf("node.kv[0].key should be 'hello11', got %s", node.kv[0].key)
 	}
 	// insert middle
-	ok, err = node.insert("hello21", "value21")
+	ok, err = node.insertLeaf("hello21", "value21")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +247,7 @@ func TestLeafNodeInsertIntoFrontMiddleAndEnd(t *testing.T) {
 	}
 
 	// insert end
-	ok, err = node.insert("hello51", "value51")
+	ok, err = node.insertLeaf("hello51", "value51")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,17 +263,17 @@ func TestLeafNodeInsertUpdateExistingKeyWithLargerValue(t *testing.T) {
 	node := newLeafNode()
 
 	// inset empty
-	ok, err := node.insert("hello1", "value1")
-	ok, err = node.insert("hello2", "value2")
-	ok, err = node.insert("hello3", "value3")
-	ok, err = node.insert("hello4", "value4")
-	ok, err = node.insert("hello5", "value5")
+	ok, err := node.insertLeaf("hello1", "value1")
+	ok, err = node.insertLeaf("hello2", "value2")
+	ok, err = node.insertLeaf("hello3", "value3")
+	ok, err = node.insertLeaf("hello4", "value4")
+	ok, err = node.insertLeaf("hello5", "value5")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// override
-	ok, err = node.insert("hello2", "updatedLargerValue")
+	ok, err = node.insertLeaf("hello2", "updatedLargerValue")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,17 +288,17 @@ func TestLeafNodeInsertUpdateExistingKeWithSmallerValue(t *testing.T) {
 	node := newLeafNode()
 
 	// inset empty
-	ok, err := node.insert("hello1", "value1")
-	ok, err = node.insert("hello2", "I am a very very large value")
-	ok, err = node.insert("hello3", "value3")
-	ok, err = node.insert("hello4", "value4")
-	ok, err = node.insert("hello5", "value5")
+	ok, err := node.insertLeaf("hello1", "value1")
+	ok, err = node.insertLeaf("hello2", "I am a very very large value")
+	ok, err = node.insertLeaf("hello3", "value3")
+	ok, err = node.insertLeaf("hello4", "value4")
+	ok, err = node.insertLeaf("hello5", "value5")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// override
-	ok, err = node.insert("hello2", "small value")
+	ok, err = node.insertLeaf("hello2", "small value")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +316,7 @@ func TestLeafNodeInsertOverflow(t *testing.T) {
 	// inset empty
 	//fmt.Printf("slotOffset %d, freePageOffset %d\n", node.slotOffset, node.freePageOffset)
 
-	ok, err := node.insert("hello1", "value1")
+	ok, err := node.insertLeaf("hello1", "value1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,9 +325,9 @@ func TestLeafNodeInsertOverflow(t *testing.T) {
 	//fmt.Printf("slotOffset %d, freePageOffset %d\n", node.slotOffset, node.freePageOffset)
 
 	//fmt.Printf("string length %d\n", len(largeValue))
-	ok, err = node.insert("hello2", largeValue)
+	ok, err = node.insertLeaf("hello2", largeValue)
 	//fmt.Printf("slotOffset %d, freePageOffset %d\n", node.slotOffset, node.freePageOffset)
-	ok, err = node.insert("hello3", largeValue)
+	ok, err = node.insertLeaf("hello3", largeValue)
 	if err == nil || ok {
 		t.Fatalf("insert should fail on overflow")
 	}
@@ -342,7 +342,7 @@ func TestLeafNodeInsertOverrideOverflow(t *testing.T) {
 	// inset empty
 	//fmt.Printf("slotOffset %d, freePageOffset %d\n", node.slotOffset, node.freePageOffset)
 
-	ok, err := node.insert("hello1", "value1")
+	ok, err := node.insertLeaf("hello1", "value1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,13 +351,13 @@ func TestLeafNodeInsertOverrideOverflow(t *testing.T) {
 	//fmt.Printf("slotOffset %d, freePageOffset %d\n", node.slotOffset, node.freePageOffset)
 
 	//fmt.Printf("string length %d\n", len(largeValue))
-	ok, err = node.insert("hello2", largeValue)
+	ok, err = node.insertLeaf("hello2", largeValue)
 	//fmt.Printf("slotOffset %d, freePageOffset %d\n", node.slotOffset, node.freePageOffset)
-	ok, err = node.insert("hello3", "small Value")
+	ok, err = node.insertLeaf("hello3", "small Value")
 	if err != nil {
 		t.Fatal(err)
 	}
-	ok, err = node.insert("hello3", largeValue)
+	ok, err = node.insertLeaf("hello3", largeValue)
 	if err == nil || ok {
 		t.Fatalf("insert should fail on overflow")
 	}
@@ -373,17 +373,17 @@ func TestLeafNodeInsert(t *testing.T) {
 	node.kv = append(node.kv, keyValue{key: "hello2", value: "world2"})
 	node.kv = append(node.kv, keyValue{key: "hello3", value: "world3"})
 
-	encodedPage, err := node.encode()
+	encodedPage, err := node.encodeLeaf()
 	if err != nil {
 		t.Fatal(err)
 	}
-	decodedNode, err := decode(encodedPage)
+	decodedNode, err := decodeLeaf(encodedPage)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	oldLen := len(decodedNode.kv)
-	ok, err := decodedNode.insert("hello11", "value11")
+	ok, err := decodedNode.insertLeaf("hello11", "value11")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,7 +408,7 @@ func TestLeafNodeInsertOffsetBookkeeping(t *testing.T) {
 	// pick keys/values, compute expected cellSize by hand for each
 	key1 := "hello1"
 	value1 := "value1"
-	_, err := node.insert(key1, value1)
+	_, err := node.insertLeaf(key1, value1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +425,7 @@ func TestLeafNodeInsertOffsetBookkeeping(t *testing.T) {
 	// second insert, recompute expected offsets from the first insert's result
 	key2 := "hello2"
 	value2 := "value2"
-	_, err = node.insert(key2, value2)
+	_, err = node.insertLeaf(key2, value2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -441,7 +441,7 @@ func TestLeafNodeInsertOffsetBookkeeping(t *testing.T) {
 	// now do one UPDATE (existing key, different-length value) and verify
 	// freePageOffset moves by the delta (new-old), slotOffset stays unchanged
 	updatedValue2 := "updatedValue2"
-	_, err = node.insert(key2, updatedValue2)
+	_, err = node.insertLeaf(key2, updatedValue2)
 	if err != nil {
 		t.Fatal(err)
 	}

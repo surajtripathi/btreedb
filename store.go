@@ -27,7 +27,7 @@ func Open(dbPath string) (*Store, error) {
 		store.rootPageID = rootPageID
 
 		emptyRootNode := newLeafNode()
-		encode, err := emptyRootNode.encode()
+		encode, err := emptyRootNode.encodeLeaf()
 		if err != nil {
 			return nil, err
 		}
@@ -48,12 +48,12 @@ func (s *Store) Get(key string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	node, err := decode(page)
+	node, err := decodeLeaf(page)
 	if err != nil {
 		return "", err
 	}
 
-	index, ok := node.search(key)
+	index, ok := node.searchLeaf(key)
 	if !ok {
 		return "", NotFound
 	}
@@ -66,17 +66,17 @@ func (s *Store) Put(key string, value string) error {
 	if err != nil {
 		return err
 	}
-	node, err := decode(page)
+	node, err := decodeLeaf(page)
 	if err != nil {
 		return err
 	}
 
-	_, err = node.insert(key, value)
+	_, err = node.insertLeaf(key, value)
 	if err != nil {
 		return err
 	}
 
-	encodeNode, err := node.encode()
+	encodeNode, err := node.encodeLeaf()
 	if err != nil {
 		return err
 	}
