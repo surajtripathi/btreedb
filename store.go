@@ -2,6 +2,7 @@ package btreestore
 
 import (
 	"errors"
+	"fmt"
 )
 
 type Store struct {
@@ -44,21 +45,38 @@ func Open(dbPath string) (*Store, error) {
 }
 
 func (s *Store) Get(key string) (string, error) {
-	page, err := s.pager.readPage(s.rootPageID)
-	if err != nil {
-		return "", err
-	}
-	node, err := decodeLeaf(page)
-	if err != nil {
-		return "", err
-	}
+	pageID := s.rootPageID
+	for {
+		page, err := s.pager.readPage(pageID)
+		if err != nil {
+			return "", err
+		}
+		switch nodeType(page) {
+		case InternalNodeType:
+			internalNode, err := decodeInternal(page)
+			if err != nil {
+				return "", err
+			}
+			index := internalNode.searchInternal(key)
+			if index >= len(internalNode.children) {
+				return "", errors.New(fmt.Sprintf("index %d out of range", index))
+			}
+			pageID = internalNode.children[index]
+		case LeafNodeType:
+			node, err := decodeLeaf(page)
+			if err != nil {
+				return "", err
+			}
 
-	index, ok := node.searchLeaf(key)
-	if !ok {
-		return "", NotFound
+			index, ok := node.searchLeaf(key)
+			if !ok {
+				return "", NotFound
+			}
+			return node.kv[index].value, nil
+		default:
+			return "", errors.New("invalid page")
+		}
 	}
-
-	return node.kv[index].value, nil
 }
 
 func (s *Store) Put(key string, value string) error {

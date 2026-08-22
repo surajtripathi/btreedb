@@ -50,6 +50,10 @@ type NodeType byte
 const LeafNodeType NodeType = 1
 const InternalNodeType NodeType = 2
 
+func nodeType(page []byte) NodeType {
+	return NodeType(page[pageTypeStart])
+}
+
 type LeafNode struct {
 	kv             []keyValue
 	nextPageID     uint64
