@@ -2,6 +2,7 @@ package btreestore
 
 import (
 	"encoding/binary"
+	"sort"
 )
 
 type InternalNode struct {
@@ -78,6 +79,20 @@ func (in *InternalNode) encodeInternal() ([]byte, error) {
 	binary.BigEndian.PutUint16(page[freePageStart:internalSlotDirStart], uint16(freePagePointer))
 
 	return page, nil
+}
+
+/*
+item[0]: key=∅        , child=P0   (covers: everything < k1)
+item[1]: key=k1        , child=P1   (covers: k1 <= x < k2)
+item[2]: key=k2        , child=P2   (covers: k2 <= x < k3)
+item[3]: key=k3        , child=P3   (covers: x >= k3)
+*/
+
+func (in *InternalNode) searchInternal(x string) int {
+	index := sort.Search(len(in.keys), func(i int) bool {
+		return in.keys[i] > x
+	})
+	return index
 }
 
 func decodeInternal(page []byte) (*InternalNode, error) {

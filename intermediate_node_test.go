@@ -82,3 +82,44 @@ func TestInternalNode_Encode_Overflow(t *testing.T) {
 		t.Fatalf("encodeIntermediateNode failed: %v", err)
 	}
 }
+
+func TestInternalNode_Search(t *testing.T) {
+	in := newInternalNode()
+	in.keys = append(in.keys, "key1")
+	in.keys = append(in.keys, "key2")
+	in.keys = append(in.keys, "key3")
+	in.keys = append(in.keys, "key4")
+
+	in.children = append(in.children, 0)
+	in.children = append(in.children, 1)
+	in.children = append(in.children, 2)
+	in.children = append(in.children, 3)
+	in.children = append(in.children, 4)
+
+	index := in.searchInternal("key0")
+	// index should be zero, index zero points to children[0]
+	if index != 0 {
+		t.Fatalf("searchInternal failed: %v", index)
+	}
+	index = in.searchInternal("key1")
+	// index should be 1, index 1 points to children[1]
+	if index != 1 {
+		t.Fatalf("searchInternal failed: %v", index)
+	}
+	index = in.searchInternal("key12")
+	// index should still 1, index 1 points to children[1]
+	if index != 1 {
+		t.Fatalf("searchInternal failed: %v", index)
+	}
+	index = in.searchInternal("key41")
+	// index should still 4, index 4 points to children[4]
+	if index != 4 {
+		t.Fatalf("searchInternal failed: %v", index)
+	}
+
+	index = in.searchInternal("key4")
+	// index should be 4, index 4 points to children[4]
+	if index != 4 {
+		t.Fatalf("searchInternal failed: %v", index)
+	}
+}
