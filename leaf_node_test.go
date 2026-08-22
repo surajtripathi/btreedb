@@ -2,6 +2,8 @@ package btreestore
 
 import (
 	"errors"
+	"fmt"
+	"sort"
 	"strconv"
 	"testing"
 )
@@ -451,5 +453,70 @@ func TestLeafNodeInsertOffsetBookkeeping(t *testing.T) {
 	}
 	if node.slotOffset != uint16(slotOffset) {
 		t.Fatalf("slotOffset = %d, expected %d", node.slotOffset, slotOffset)
+	}
+}
+
+func TestSplitLeaf(t *testing.T) {
+	ln := newLeafNode()
+	isOverflow := false
+	i := 0
+	kvs := make([]keyValue, 0)
+	for ; ; i++ {
+		ok, err := ln.insertLeaf(fmt.Sprintf("hello%03d", i), fmt.Sprintf("value%03d", i))
+		if !ok {
+			if errors.Is(err, ErrorOverFlow) {
+				isOverflow = true
+			}
+			break
+		} else {
+			kvs = append(kvs, keyValue{key: fmt.Sprintf("hello%03d", i), value: fmt.Sprintf("value%03d", i)})
+		}
+
+	}
+	if isOverflow {
+		left, right, promotionKey, err := ln.splitLeaf(fmt.Sprintf("hello%03d1", i/2), fmt.Sprintf("value%03d2", i/2))
+		kvs = append(kvs, keyValue{key: fmt.Sprintf("hello%03d1", i/2), value: fmt.Sprintf("value%03d2", i/2)})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		sort.Slice(kvs, func(i, j int) bool {
+			return kvs[i].key < kvs[j].key
+		})
+
+		combined := make([]keyValue, 0, len(left.kv)+len(right.kv))
+		combined = append(combined, left.kv...)
+		combined = append(combined, right.kv...)
+
+		for i, kv := range kvs {
+			if kv.key != combined[i].key {
+				t.Fatalf("kvs[%d].key should be %s, got %s", i, kv.key, combined[i].key)
+			}
+		}
+
+		for i = 1; i < len(left.kv); i++ {
+			if left.kv[i-1].key > left.kv[i].key {
+				t.Fatalf("node data should be sorted in asc order but, left.kv[%d].key > left.kv[%d].key", i, i)
+			}
+		}
+		for i = 1; i < len(right.kv); i++ {
+			if right.kv[i-1].key > right.kv[i].key {
+				t.Fatalf("node data should be sorted in asc order but, right.kv[%d].key > right.kv[%d].key", i, i)
+			}
+		}
+		if left.kv[len(left.kv)-1].key >= promotionKey {
+			t.Fatalf("left.kv[len(left.kv)-1].key should be less than promotion key")
+		}
+
+		if right.kv[0].key < promotionKey {
+			t.Fatalf("right.kv[0].key should be greater or equal to promotion key")
+		}
+		if right.kv[0].key != promotionKey {
+			t.Fatalf("right.kv[0].key should be equal to promotion key")
+		}
+
+		if len(left.kv)+len(right.kv) != len(ln.kv)+1 {
+			t.Fatalf("data should be preserved")
+		}
 	}
 }

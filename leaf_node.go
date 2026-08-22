@@ -70,6 +70,12 @@ func newLeafNode() *LeafNode {
 	}
 }
 
+/*
+A single key/value larger than ~half a page can cause a split to still overflow,
+or fail to fit at all even in an empty leaf.
+Not handled — encode() will surface ErrorOverFlow rather than corrupt data,
+but Put won't give a clean 'key too large' message in this case.
+*/
 func (ln *LeafNode) encodeLeaf() ([]byte, error) {
 	page := make([]byte, pageSize)
 
@@ -140,6 +146,42 @@ func (ln *LeafNode) insertLeaf(key string, value string) (bool, error) {
 	ln.slotOffset = ln.slotOffset + 2
 
 	return true, nil
+}
+
+func (ln *LeafNode) splitLeaf(neyKey string, newValue string) (*LeafNode, *LeafNode, string, error) {
+	index, ok := ln.searchLeaf(neyKey)
+	tempLen := len(ln.kv)
+	if !ok {
+		tempLen += 1
+	}
+	tempKV := make([]keyValue, tempLen)
+
+	if ok {
+		copy(tempKV[0:tempLen], ln.kv[0:tempLen])
+		tempKV[index].value = newValue
+	} else {
+		copy(tempKV[0:index], ln.kv[0:index])
+		tempKV[index] = keyValue{neyKey, newValue}
+		copy(tempKV[index+1:], ln.kv[index:])
+	}
+
+	i := 0
+	leftNode := newLeafNode()
+	rightNode := newLeafNode()
+	for ; i < len(tempKV)/2; i++ {
+		ok, err := leftNode.insertLeaf(tempKV[i].key, tempKV[i].value)
+		if !ok {
+			return nil, nil, "", err
+		}
+	}
+	promotedKey := tempKV[i].key
+	for ; i < len(tempKV); i++ {
+		ok, err := rightNode.insertLeaf(tempKV[i].key, tempKV[i].value)
+		if !ok {
+			return nil, nil, "", err
+		}
+	}
+	return leftNode, rightNode, promotedKey, nil
 }
 
 func decodeLeaf(page []byte) (*LeafNode, error) {
