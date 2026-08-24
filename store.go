@@ -173,8 +173,8 @@ func (s *Store) propagateUpdateToPath(leftPageID uint64, rightPageID uint64, pro
 		if err != nil {
 			return err
 		}
-		fmt.Printf("rootPage %v\n", pageID)
-		fmt.Printf("root %v\n", in)
+		//fmt.Printf("rootPage %v\n", pageID)
+		//fmt.Printf("root %v\n", in)
 		s.rootPageID = pageID
 	} else {
 		// update the existing internal node
@@ -190,7 +190,7 @@ func (s *Store) propagateUpdateToPath(leftPageID uint64, rightPageID uint64, pro
 		err = in.insertInternal(propagationKey, rightPageID)
 		if err != nil {
 			if errors.Is(err, ErrorOverFlow) {
-				fmt.Printf("internal node split %v\n", in)
+				//fmt.Printf("internal node split %v\n", in)
 				left, right, promotedKey, err := in.splitInternal(propagationKey, rightPageID)
 				//fmt.Printf("promoted key : %v\n", promotedKey)
 				if err != nil {

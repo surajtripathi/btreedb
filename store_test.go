@@ -2,9 +2,9 @@ package btreestore
 
 import (
 	"errors"
-	"fmt"
-	"path"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strconv"
 	"testing"
 )
@@ -124,73 +124,117 @@ func TestStore_GetPut(t *testing.T) {
 	}
 }
 
-const baseKey = "keydkjngdfshfkhkhfjhkdfhksdhvkdhkdfkdhfsdhfkdhfkdsjhfksdfhksfsasjashkdfhxkc"
+const baseKey = "keydkjngdfshfkhkhfjhkdfhksdhvkdhkdfkdhfsdhfkdhfkdsjhfksdfhksfsasjashkdfhxkcdkjngdfshfkhkhfjhkdfhksdhvkdhkdfkdhfsdhfkdhfkdsjhfksdfhksfsasjashkdfhxkc"
 const baseValue = "i am a very very laaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaage value, i am a very very laaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaage value, i am a very very laaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaage value"
 
-func TestStore_PutOverflow(t *testing.T) {
-	//dir := t.TempDir()
-	//path := filepath.Join(dir, "test.db")
-	const dir = "store"
-	const filePrefix = "btree"
-
-	store, err := createStoreWithData(path.Join(dir, filePrefix+".btree"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < 30001; i++ {
-		if err = store.Put(baseKey+strconv.Itoa(i), baseValue+strconv.Itoa(i)); err != nil {
-			t.Fatal(err)
-		}
-		if i%1000 == 0 {
-			fmt.Printf("progress %d\n", i)
-		}
-	}
-	page, err := store.pager.readPage(store.rootPageID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	in, err := decodeInternal(page)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fmt.Printf("\nkeys %v", in.keys)
-	fmt.Printf("\npointers %v", in.children)
-
-	for i := 0; i < 30001; i++ {
-		key := baseKey + strconv.Itoa(i)
-		val, err := store.Get(key)
-		if err != nil {
-			t.Fatalf("error :%v, key:%s", err, key)
-		}
-		if val != baseValue+strconv.Itoa(i) {
-			t.Fatalf("expect %s, but got %s", baseValue, val)
-		}
-		if i%1000 == 0 {
-			fmt.Printf("progress %d\n", i)
-		}
-	}
-	err = store.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
+type TestData struct {
+	leafKeys             []string
+	leafValues           []string
+	leafDepths           []int
+	internalKeySize      []int
+	internalChildrenSize []int
 }
 
-func TestStore_Read(t *testing.T) {
-	const dir = "store"
-	const filePrefix = "btree"
+func dumpTree(s *Store, pageID uint64, depth int, td *TestData) error {
+	page, err := s.pager.readPage(pageID)
+	if err != nil {
+		return err
+	}
+	switch nodeType(page) {
+	case LeafNodeType:
+		leaf, err := decodeLeaf(page)
+		if err != nil {
+			return err
+		}
+		for i := 0; i < len(leaf.kv); i++ {
+			td.leafKeys = append(td.leafKeys, leaf.kv[i].key)
+			td.leafValues = append(td.leafValues, leaf.kv[i].value)
+		}
+		td.leafDepths = append(td.leafDepths, depth)
+	case InternalNodeType:
+		in, err := decodeInternal(page)
+		if err != nil {
+			return err
+		}
+		td.internalKeySize = append(td.internalKeySize, len(in.keys))
+		td.internalChildrenSize = append(td.internalChildrenSize, len(in.children))
+		for _, childID := range in.children {
+			if err := dumpTree(s, childID, depth+1, td); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
 
-	store, err := createStoreWithData(path.Join(dir, filePrefix+".btree"))
+func TestStore_TreeStructureAfterManyInserts(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	size := 3001
 
-	for i := 0; i < 100; i++ {
+	keys := make([]string, size)
+	values := make([]string, size)
+
+	for i := 0; i < size; i++ {
 		key := baseKey + strconv.Itoa(i)
-		val, err := store.Get(key)
-		if err != nil {
-			t.Fatalf("error :%v, key:%s", err, key)
+		value := baseValue + strconv.Itoa(i)
+		if err = store.Put(key, value); err != nil {
+			t.Fatal(err)
 		}
-		println(val)
+		keys[i] = key
+		values[i] = value
+	}
+	// validate key, value check using get
+	for i := 0; i < size; i++ {
+		key := baseKey + strconv.Itoa(i)
+		expectedValue := baseValue + strconv.Itoa(i)
+		gotValue, err := store.Get(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotValue != expectedValue {
+			t.Fatalf("expect %s, but got %s", expectedValue, gotValue)
+		}
+	}
+
+	td := &TestData{
+		leafKeys:             make([]string, 0),
+		leafValues:           make([]string, 0),
+		leafDepths:           make([]int, 0),
+		internalKeySize:      make([]int, 0),
+		internalChildrenSize: make([]int, 0),
+	}
+	err = dumpTree(store, store.rootPageID, 0, td)
+
+	// assert: leaf entry count sums to number of keys inserted
+	slices.Sort(td.leafKeys)
+	slices.Sort(keys)
+	if !reflect.DeepEqual(td.leafKeys, keys) {
+		t.Fatalf("expect %v, but got %v", keys, td.leafKeys)
+	}
+
+	slices.Sort(td.leafValues)
+	slices.Sort(values)
+	if !reflect.DeepEqual(td.leafValues, values) {
+		t.Fatalf("expect %v, but got %v", values, td.leafValues)
+	}
+
+	// assert: all leaf depths equal
+	leafDepth := td.leafDepths[0]
+	for i := 1; i < len(td.leafDepths); i++ {
+		if leafDepth != td.leafDepths[i] {
+			t.Fatalf("leaf nodes are expected to be at same lvel, expect %d, but got %d", leafDepth, td.leafDepths[i])
+		}
+	}
+
+	// assert: every internal node satisfies len(children) == len(keys)+1
+	for i := 0; i < len(td.internalChildrenSize); i++ {
+		if td.internalChildrenSize[i] != td.internalKeySize[i]+1 {
+			t.Fatalf("internal nodes keys size should be 1 less than internal nodes childrens")
+		}
 	}
 }
 
