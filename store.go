@@ -80,32 +80,156 @@ func (s *Store) Get(key string) (string, error) {
 }
 
 func (s *Store) Put(key string, value string) error {
-	page, err := s.pager.readPage(s.rootPageID)
-	if err != nil {
-		return err
-	}
-	node, err := decodeLeaf(page)
-	if err != nil {
-		return err
+	pageID := s.rootPageID
+	path := make([]uint64, 0)
+	for {
+		page, err := s.pager.readPage(pageID)
+		if err != nil {
+			return err
+		}
+		switch nodeType(page) {
+		case InternalNodeType:
+			internalNode, err := decodeInternal(page)
+			if err != nil {
+				return err
+			}
+			index := internalNode.searchInternal(key)
+			if index >= len(internalNode.children) {
+				return errors.New(fmt.Sprintf("index %d out of range", index))
+			}
+			path = append(path, pageID)
+			pageID = internalNode.children[index]
+		case LeafNodeType:
+			node, err := decodeLeaf(page)
+			if err != nil {
+				return err
+			}
+			ok, err := node.insertLeaf(key, value)
+			if ok {
+				encodedLeaf, err := node.encodeLeaf()
+				if err != nil {
+					return err
+				}
+				err = s.pager.writePage(encodedLeaf, pageID)
+				if err != nil {
+					return err
+				}
+			} else if errors.Is(err, ErrorOverFlow) {
+				l, r, pk, err := node.splitLeaf(key, value)
+				if err != nil {
+					return err
+				}
+				pkPageID := s.pager.allocatePage()
+				r.nextPageID = node.nextPageID
+				l.nextPageID = pkPageID
+				rightEncoded, err := r.encodeLeaf()
+				if err != nil {
+					return err
+				}
+				err = s.pager.writePage(rightEncoded, pkPageID)
+				if err != nil {
+					return err
+				}
+				leftEncoded, err := l.encodeLeaf()
+				if err != nil {
+					return err
+				}
+				err = s.pager.writePage(leftEncoded, pageID)
+				if err != nil {
+					return err
+				}
+				err = s.propagateUpdateToPath(pageID, pkPageID, pk, path)
+				if err != nil {
+					return err
+				}
+			} else {
+				return err
+			}
+			return s.pager.Sync()
+		default:
+			return errors.New("invalid page")
+		}
+
 	}
 
-	_, err = node.insertLeaf(key, value)
-	if err != nil {
-		return err
-	}
+}
 
-	encodeNode, err := node.encodeLeaf()
-	if err != nil {
-		return err
-	}
-
-	err = s.pager.writePage(encodeNode, s.rootPageID)
-	if err != nil {
-		return err
-	}
-	err = s.pager.Sync()
-	if err != nil {
-		return err
+func (s *Store) propagateUpdateToPath(leftPageID uint64, rightPageID uint64, propagationKey string, path []uint64) error {
+	// new root
+	if len(path) == 0 {
+		pageID := s.pager.allocatePage()
+		in, err := newInternalNode(leftPageID, rightPageID, propagationKey)
+		if err != nil {
+			if errors.Is(err, ErrorOverFlow) {
+				return errors.New("key is so big that even the internal node creation is failing")
+			}
+			return err
+		}
+		internalEncoded, err := in.encodeInternal()
+		if err != nil {
+			return err
+		}
+		err = s.pager.writePage(internalEncoded, pageID)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("rootPage %v\n", pageID)
+		fmt.Printf("root %v\n", in)
+		s.rootPageID = pageID
+	} else {
+		// update the existing internal node
+		pageID := path[len(path)-1]
+		page, err := s.pager.readPage(pageID)
+		if err != nil {
+			return err
+		}
+		in, err := decodeInternal(page)
+		if err != nil {
+			return err
+		}
+		err = in.insertInternal(propagationKey, rightPageID)
+		if err != nil {
+			if errors.Is(err, ErrorOverFlow) {
+				fmt.Printf("internal node split %v\n", in)
+				left, right, promotedKey, err := in.splitInternal(propagationKey, rightPageID)
+				//fmt.Printf("promoted key : %v\n", promotedKey)
+				if err != nil {
+					return err
+				}
+				newRightPageID := s.pager.allocatePage()
+				leftEncoded, err := left.encodeInternal()
+				if err != nil {
+					return err
+				}
+				err = s.pager.writePage(leftEncoded, pageID)
+				if err != nil {
+					return err
+				}
+				rightEncoded, err := right.encodeInternal()
+				if err != nil {
+					return err
+				}
+				err = s.pager.writePage(rightEncoded, newRightPageID)
+				if err != nil {
+					return err
+				}
+				err = s.propagateUpdateToPath(pageID, newRightPageID, promotedKey, path[0:len(path)-1])
+				if err != nil {
+					return err
+				}
+				return nil
+			}
+			// need to implement recursive overflow of internal node that requires split implementation
+			return err
+		}
+		encodedInternal, err := in.encodeInternal()
+		if err != nil {
+			return err
+		}
+		err = s.pager.writePage(encodedInternal, pageID)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

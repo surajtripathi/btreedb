@@ -34,11 +34,19 @@ type InternalNode struct {
 
 const internalSlotDirStart = 5
 
-func newInternalNode() *InternalNode {
-	return &InternalNode{
+func newInternalNode(leftPointer uint64, rightPointer uint64, key string) (*InternalNode, error) {
+	in := &InternalNode{
 		keys:     make([]string, 0),
 		children: make([]uint64, 0),
 	}
+	in.keys = append(in.keys, key)
+	in.children = append(in.children, leftPointer, rightPointer)
+
+	_, err := in.encodeInternal()
+	if err != nil {
+		return nil, err
+	}
+	return in, nil
 }
 
 func (in *InternalNode) encodeInternal() ([]byte, error) {
@@ -65,7 +73,6 @@ func (in *InternalNode) encodeInternal() ([]byte, error) {
 		keyChildStartingOffset := freePagePointer - len(keyChildBuff)
 
 		if keyChildStartingOffset < (slotPointer + 2) {
-
 			return nil, ErrorOverFlow
 		}
 
@@ -77,22 +84,10 @@ func (in *InternalNode) encodeInternal() ([]byte, error) {
 	}
 
 	binary.BigEndian.PutUint16(page[freePageStart:internalSlotDirStart], uint16(freePagePointer))
+	in.freePageOffset = uint16(freePagePointer)
+	in.slotOffset = uint16(slotPointer)
 
 	return page, nil
-}
-
-/*
-item[0]: key=∅        , child=P0   (covers: everything < k1)
-item[1]: key=k1        , child=P1   (covers: k1 <= x < k2)
-item[2]: key=k2        , child=P2   (covers: k2 <= x < k3)
-item[3]: key=k3        , child=P3   (covers: x >= k3)
-*/
-
-func (in *InternalNode) searchInternal(x string) int {
-	index := sort.Search(len(in.keys), func(i int) bool {
-		return in.keys[i] > x
-	})
-	return index
 }
 
 func decodeInternal(page []byte) (*InternalNode, error) {
@@ -116,6 +111,55 @@ func decodeInternal(page []byte) (*InternalNode, error) {
 	}
 	node.slotOffset = uint16(slotPointer)
 	return &node, nil
+}
+
+/*
+item[0]: key=∅        , child=P0   (covers: everything < k1)
+item[1]: key=k1        , child=P1   (covers: k1 <= x < k2)
+item[2]: key=k2        , child=P2   (covers: k2 <= x < k3)
+item[3]: key=k3        , child=P3   (covers: x >= k3)
+*/
+
+func (in *InternalNode) searchInternal(x string) int {
+	index := sort.Search(len(in.keys), func(i int) bool {
+		return in.keys[i] > x
+	})
+	return index
+}
+
+func (in *InternalNode) insertInternal(x string, pageID uint64) error {
+
+	newSlotOffset := in.slotOffset + 2
+	newFreePageOffset := int(in.freePageOffset) - (2 + len(x) + 8)
+
+	if int(newSlotOffset) > newFreePageOffset {
+		return ErrorOverFlow
+	}
+
+	in.keys, in.children = insertKeyChildInternal(x, pageID, in)
+
+	in.freePageOffset = uint16(newFreePageOffset)
+	in.slotOffset = newSlotOffset
+	return nil
+}
+
+// should be used internally within this file
+// extracting it reuse it in split
+// works on copy of new key and new value and does not modify the in param
+func insertKeyChildInternal(x string, pageID uint64, in *InternalNode) ([]string, []uint64) {
+	index := in.searchInternal(x)
+
+	newKeys := make([]string, len(in.keys)+1)
+	copy(newKeys[0:index], in.keys[0:index])
+	newKeys[index] = x
+	copy(newKeys[index+1:], in.keys[index:])
+
+	index += 1
+	newChildren := make([]uint64, len(in.children)+1)
+	copy(newChildren[0:index], in.children[0:index])
+	newChildren[index] = pageID
+	copy(newChildren[index+1:], in.children[index:])
+	return newKeys, newChildren
 }
 
 /*
@@ -149,4 +193,44 @@ func decodeKeyChildrenInternal(page []byte, offset uint16) (string, uint64) {
 	keyChildOff += 8
 
 	return key, child
+}
+
+func (in *InternalNode) splitInternal(key string, newChildID uint64) (*InternalNode, *InternalNode, string, error) {
+	newKeys, newChildren := insertKeyChildInternal(key, newChildID, in)
+	//fmt.Printf("newKeys %v, newChildren %v\n", newKeys, newChildren)
+	size := len(newKeys)
+
+	left, err := newInternalNode(newChildren[0], newChildren[1], newKeys[0])
+	if err != nil {
+		return nil, nil, "", err
+	}
+	keyIndex := 1
+	childIndex := 2
+	mid := size / 2
+	for keyIndex < mid {
+		err := left.insertInternal(newKeys[keyIndex], newChildren[childIndex])
+		if err != nil {
+			return nil, nil, "", err
+		}
+		keyIndex++
+		childIndex++
+	}
+	promotionKey := newKeys[keyIndex]
+	keyIndex++
+	right, err := newInternalNode(newChildren[childIndex], newChildren[childIndex+1], newKeys[keyIndex])
+	childIndex++
+	childIndex++
+	keyIndex++
+	if err != nil {
+		return nil, nil, "", err
+	}
+	for keyIndex < size {
+		err := right.insertInternal(newKeys[keyIndex], newChildren[childIndex])
+		if err != nil {
+			return nil, nil, "", err
+		}
+		keyIndex++
+		childIndex++
+	}
+	return left, right, promotionKey, nil
 }

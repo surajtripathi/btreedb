@@ -2,6 +2,8 @@ package btreestore
 
 import (
 	"errors"
+	"fmt"
+	"path"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -122,29 +124,73 @@ func TestStore_GetPut(t *testing.T) {
 	}
 }
 
+const baseKey = "keydkjngdfshfkhkhfjhkdfhksdhvkdhkdfkdhfsdhfkdhfkdsjhfksdfhksfsasjashkdfhxkc"
+const baseValue = "i am a very very laaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaage value, i am a very very laaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaage value, i am a very very laaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaage value"
+
 func TestStore_PutOverflow(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "test.db")
-	store, err := createStoreWithData(path)
+	//dir := t.TempDir()
+	//path := filepath.Join(dir, "test.db")
+	const dir = "store"
+	const filePrefix = "btree"
+
+	store, err := createStoreWithData(path.Join(dir, filePrefix+".btree"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	sawOverflow := false
-	for i := 0; i < 10000; i++ {
-		if err = store.Put("key"+strconv.Itoa(i), "value"); err != nil {
-			if !errors.Is(err, ErrorOverFlow) {
-				t.Fatal(err)
-			}
-			sawOverflow = true
-			break
+	for i := 0; i < 30001; i++ {
+		if err = store.Put(baseKey+strconv.Itoa(i), baseValue+strconv.Itoa(i)); err != nil {
+			t.Fatal(err)
+		}
+		if i%1000 == 0 {
+			fmt.Printf("progress %d\n", i)
 		}
 	}
-	if !sawOverflow {
-		t.Fatal("expected page to overflow but all the inserts succeeded")
+	page, err := store.pager.readPage(store.rootPageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, err := decodeInternal(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Printf("\nkeys %v", in.keys)
+	fmt.Printf("\npointers %v", in.children)
+
+	for i := 0; i < 30001; i++ {
+		key := baseKey + strconv.Itoa(i)
+		val, err := store.Get(key)
+		if err != nil {
+			t.Fatalf("error :%v, key:%s", err, key)
+		}
+		if val != baseValue+strconv.Itoa(i) {
+			t.Fatalf("expect %s, but got %s", baseValue, val)
+		}
+		if i%1000 == 0 {
+			fmt.Printf("progress %d\n", i)
+		}
 	}
 	err = store.Close()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestStore_Read(t *testing.T) {
+	const dir = "store"
+	const filePrefix = "btree"
+
+	store, err := createStoreWithData(path.Join(dir, filePrefix+".btree"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 100; i++ {
+		key := baseKey + strconv.Itoa(i)
+		val, err := store.Get(key)
+		if err != nil {
+			t.Fatalf("error :%v, key:%s", err, key)
+		}
+		println(val)
 	}
 }
 
@@ -159,7 +205,10 @@ func TestGet_Two_Level_Page(t *testing.T) {
 	ln1PageID := pager.allocatePage()
 	ln2 := newLeafNode() //page id 1
 	ln2PageID := pager.allocatePage()
-	in0 := newInternalNode() //page id 2
+	in0, err := newInternalNode(ln1PageID, ln2PageID, "m") //page id 2
+	if err != nil {
+		t.Fatal(err)
+	}
 	in0PageID := pager.allocatePage()
 	ln1.nextPageID = ln2PageID
 
@@ -206,10 +255,6 @@ func TestGet_Two_Level_Page(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	in0.children = append(in0.children, ln1PageID)
-	in0.children = append(in0.children, ln2PageID)
-	in0.keys = append(in0.keys, "m")
 
 	encodedIn0, err := in0.encodeInternal()
 	if err != nil {
