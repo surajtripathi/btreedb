@@ -49,6 +49,7 @@ type NodeType byte
 
 const LeafNodeType NodeType = 1
 const InternalNodeType NodeType = 2
+const SuperBlockNodeType NodeType = 3
 
 func nodeType(page []byte) NodeType {
 	return NodeType(page[pageTypeStart])

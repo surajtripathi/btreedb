@@ -6,9 +6,12 @@ import (
 )
 
 type Store struct {
-	pager      *Pager
-	rootPageID uint64
+	pager *Pager
+	//rootPageID uint64
+	superBlock *SuperBlockNode
 }
+
+const superBlockPageID = 0
 
 var NotFound = errors.New("not found")
 
@@ -18,14 +21,30 @@ func Open(dbPath string) (*Store, error) {
 		return nil, err
 	}
 	store := &Store{
-		pager:      pager,
-		rootPageID: 0,
+		pager: pager,
 	}
 
 	if store.pager.pageCounter == 0 {
 		// no file exists
+		// superBlockPageID should be always zero
+		allocatedSuperBlockPageID := store.pager.allocatePage()
+
+		if allocatedSuperBlockPageID != 0 {
+			return nil, fmt.Errorf("superBlockPageID already allocated: %d", allocatedSuperBlockPageID)
+		}
+
 		rootPageID := store.pager.allocatePage()
-		store.rootPageID = rootPageID
+		superBlockNode := newSuperBlockNode(rootPageID)
+		store.superBlock = superBlockNode
+
+		encodedSuperBlock, err := superBlockNode.encodeSuperBlock()
+		if err != nil {
+			return nil, err
+		}
+		err = store.pager.writePage(encodedSuperBlock, allocatedSuperBlockPageID)
+		if err != nil {
+			return nil, err
+		}
 
 		emptyRootNode := newLeafNode()
 		encode, err := emptyRootNode.encodeLeaf()
@@ -33,19 +52,26 @@ func Open(dbPath string) (*Store, error) {
 			return nil, err
 		}
 
-		err = store.pager.writePage(encode, rootPageID)
+		err = store.pager.writePage(encode, superBlockNode.rootPageID)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		// hard coded for now
-		store.rootPageID = 0
+		superBlockPage, err := store.pager.readPage(superBlockPageID)
+		if err != nil {
+			return nil, err
+		}
+		superBlockNode, err := decodeSuperBlock(superBlockPage)
+		if err != nil {
+			return nil, err
+		}
+		store.superBlock = superBlockNode
 	}
 	return store, nil
 }
 
 func (s *Store) Get(key string) (string, error) {
-	pageID := s.rootPageID
+	pageID := s.superBlock.rootPageID
 	for {
 		page, err := s.pager.readPage(pageID)
 		if err != nil {
@@ -80,7 +106,7 @@ func (s *Store) Get(key string) (string, error) {
 }
 
 func (s *Store) Put(key string, value string) error {
-	pageID := s.rootPageID
+	pageID := s.superBlock.rootPageID
 	path := make([]uint64, 0)
 	for {
 		page, err := s.pager.readPage(pageID)
@@ -173,9 +199,15 @@ func (s *Store) propagateUpdateToPath(leftPageID uint64, rightPageID uint64, pro
 		if err != nil {
 			return err
 		}
-		//fmt.Printf("rootPage %v\n", pageID)
-		//fmt.Printf("root %v\n", in)
-		s.rootPageID = pageID
+		s.superBlock.rootPageID = pageID
+		encodedSuperBlock, err := s.superBlock.encodeSuperBlock()
+		if err != nil {
+			return err
+		}
+		err = s.pager.writePage(encodedSuperBlock, superBlockPageID)
+		if err != nil {
+			return err
+		}
 	} else {
 		// update the existing internal node
 		pageID := path[len(path)-1]

@@ -187,6 +187,16 @@ func TestStore_TreeStructureAfterManyInserts(t *testing.T) {
 		keys[i] = key
 		values[i] = value
 	}
+	err = store.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// open store again
+	store, err = Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	// validate key, value check using get
 	for i := 0; i < size; i++ {
 		key := baseKey + strconv.Itoa(i)
@@ -207,7 +217,7 @@ func TestStore_TreeStructureAfterManyInserts(t *testing.T) {
 		internalKeySize:      make([]int, 0),
 		internalChildrenSize: make([]int, 0),
 	}
-	err = dumpTree(store, store.rootPageID, 0, td)
+	err = dumpTree(store, store.superBlock.rootPageID, 0, td)
 
 	// assert: leaf entry count sums to number of keys inserted
 	slices.Sort(td.leafKeys)
@@ -308,7 +318,7 @@ func TestGet_Two_Level_Page(t *testing.T) {
 
 	store := Store{
 		pager:      pager,
-		rootPageID: in0PageID,
+		superBlock: newSuperBlockNode(in0PageID),
 	}
 
 	val, err := store.Get("a")

@@ -43,6 +43,21 @@ func main() {
 
 	fmt.Println("kvstore ready. commands: put <k> <v> | get <k> | del <k> | exit")
 
+	//size := 3001
+	//baseKey := "hello_hello_hello_hello_hello_hello_hello_hello_hello_hello_hello_hello_hello"
+	//baseValue := "i_am_a_very_very_large_value_repeated_many_times i_am_a_very_very_large_value_repeated_many_times i_am_a_very_very_large_value_repeated_many_times i_am_a_very_very_large_value_repeated_many_times"
+	//for i := 0; i < size; i++ {
+	//	key := baseKey + strconv.Itoa(i)
+	//	value := baseValue + strconv.Itoa(i)
+	//	if err = store.Put(key, value); err != nil {
+	//		fmt.Println("failed to put:", err)
+	//		break
+	//	}
+	//	if i%1000 == 0 {
+	//		fmt.Printf("%d put complete\n", i)
+	//	}
+	//}
+
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Print("> ")
