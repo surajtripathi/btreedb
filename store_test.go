@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-func createStoreWithData(path string) (*Store, error) {
-	store, err := Open(path)
+func createStoreWithData(path string, walPath string) (*Store, error) {
+	store, err := Open(path, walPath)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +40,8 @@ func createStoreWithData(path string) (*Store, error) {
 func TestStore_Open(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.db")
-	store, err := createStoreWithData(path)
+	walPath := filepath.Join(dir, "test.wal")
+	store, err := createStoreWithData(path, walPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +65,8 @@ func TestStore_Open(t *testing.T) {
 func TestStore_PersistenceAcrossRestarts(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.db")
-	store, err := createStoreWithData(path)
+	walPath := filepath.Join(dir, "test.wal")
+	store, err := createStoreWithData(path, walPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +75,7 @@ func TestStore_PersistenceAcrossRestarts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	secondStore, err := Open(path)
+	secondStore, err := Open(path, walPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +102,8 @@ func TestStore_PersistenceAcrossRestarts(t *testing.T) {
 func TestStore_GetPut(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.db")
-	store, err := createStoreWithData(path)
+	walPath := filepath.Join(dir, "test.wal")
+	store, err := createStoreWithData(path, walPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +172,9 @@ func dumpTree(s *Store, pageID uint64, depth int, td *TestData) error {
 
 func TestStore_TreeStructureAfterManyInserts(t *testing.T) {
 	dir := t.TempDir()
-	store, err := Open(filepath.Join(dir, "test.db"))
+	btreePath := filepath.Join(dir, "test.db")
+	walPath := filepath.Join(dir, "test.wal")
+	store, err := Open(btreePath, walPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +198,7 @@ func TestStore_TreeStructureAfterManyInserts(t *testing.T) {
 	}
 
 	// open store again
-	store, err = Open(filepath.Join(dir, "test.db"))
+	store, err = Open(btreePath, walPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,5 +350,121 @@ func TestGet_Two_Level_Page(t *testing.T) {
 	val, err = store.Get("aa")
 	if !errors.Is(err, NotFound) {
 		t.Fatalf("expect Not found, but got %v", err)
+	}
+}
+
+func TestWalRecover(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	walPath := filepath.Join(dir, "test.wal")
+
+	store, err := Open(dbPath, walPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	keys := make([]string, 0)
+	vals := make([]string, 0)
+
+	for i := 0; i < 100; i++ {
+		key := "a" + strconv.Itoa(i)
+		value := "a_value" + strconv.Itoa(i)
+		err = store.Put(key, value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys = append(keys, key)
+		vals = append(vals, value)
+	}
+
+	crashKey := "crash-key"
+	crashValue := "crash-value"
+
+	//simulating crash, put is successful
+	err = store.applyPut(crashKey, crashValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys = append(keys, crashKey)
+	vals = append(vals, crashValue)
+
+	td := &TestData{}
+	err = dumpTree(store, store.superBlock.rootPageID, 0, td)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	slices.Sort(keys)
+	slices.Sort(vals)
+
+	if !reflect.DeepEqual(keys, td.leafKeys) {
+		t.Fatalf("expect %v, but got %v", keys, td.leafKeys)
+	}
+	if !reflect.DeepEqual(vals, td.leafValues) {
+		t.Fatalf("expect %v, but got %v", vals, td.leafValues)
+	}
+
+	// process crashes before wal truncate call, it will be re-applied when store opens again
+	err = store.wal.Append(WalRecord{op: opPut, key: crashKey, value: crashValue})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = store.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// store.Open should re-apply the wal log
+	store, err = Open(dbPath, walPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	td = &TestData{}
+	err = dumpTree(store, store.superBlock.rootPageID, 0, td)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// it should not have duplicate key and values as they were successfully inserted
+	// so WalReply should be no op
+	if !reflect.DeepEqual(keys, td.leafKeys) {
+		t.Fatalf("expect %v, but got %v", keys, td.leafKeys)
+	}
+	if !reflect.DeepEqual(vals, td.leafValues) {
+		t.Fatalf("expect %v, but got %v", vals, td.leafValues)
+	}
+
+	// simulate failed entry in the tree after getting written in wal
+	crashKey2 := "crash-key2"
+	crashVal2 := "crash-val2"
+
+	// dont apply put, just apply wal.append
+	err = store.wal.Append(WalRecord{op: opPut, key: crashKey2, value: crashVal2})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	val, err := store.Get(crashKey2)
+	if err == nil || !errors.Is(err, NotFound) {
+		t.Fatalf("expected NotFound before replay, but got value %v and error %v", val, err)
+	}
+	err = store.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	//opening store should recover from wal
+	store, err = Open(dbPath, walPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	val, err = store.Get(crashKey2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val != crashVal2 {
+		t.Fatalf("expect %v, but got %v", crashVal2, val)
 	}
 }

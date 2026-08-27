@@ -2,7 +2,7 @@ package main
 
 // A tiny REPL for poking at the store by hand.
 //
-// Try this to feel the WAL working:
+// Try this to feel the Wal working:
 //   1. go run ./cmd/kvcli data.wal
 //   2. put foo bar
 //   3. put baz qux
@@ -11,7 +11,7 @@ package main
 //   6. get foo        -> should still print "bar"
 //
 // Then try killing it mid-write by adding an artificial delay in
-// WAL.Append (between the Write and the Sync) and killing at just the
+// Wal.Append (between the Write and the Sync) and killing at just the
 // right moment - that's how you can reproduce a torn write and watch
 // Replay() discard it safely.
 
@@ -34,7 +34,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	store, err := btreestore.Open(path.Join(dir, filePrefix+".btree"))
+	walPath := path.Join(dir, walPath)
+	btreePath := path.Join(dir, filePrefix+".btree")
+
+	store, err := btreestore.Open(btreePath, walPath)
 	if err != nil {
 		fmt.Println("failed to open store:", err)
 		os.Exit(1)

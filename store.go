@@ -6,16 +6,16 @@ import (
 )
 
 type Store struct {
-	pager *Pager
-	//rootPageID uint64
+	pager      *Pager
 	superBlock *SuperBlockNode
+	wal        *Wal
 }
 
 const superBlockPageID = 0
 
 var NotFound = errors.New("not found")
 
-func Open(dbPath string) (*Store, error) {
+func Open(dbPath string, walPath string) (*Store, error) {
 	pager, err := newPager(dbPath)
 	if err != nil {
 		return nil, err
@@ -67,6 +67,35 @@ func Open(dbPath string) (*Store, error) {
 		}
 		store.superBlock = superBlockNode
 	}
+	err = WalReplay(walPath, func(record WalRecord) error {
+		switch record.op {
+		case opPut:
+			err := store.applyPut(record.key, record.value)
+			if err != nil {
+				return err
+			}
+		case opDelete:
+			err := store.Delete(record.key)
+			if err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown op: %d", record.op)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	wal, err := OpenWAL(walPath)
+	if err != nil {
+		return nil, err
+	}
+	err = wal.Truncate()
+	if err != nil {
+		return nil, err
+	}
+	store.wal = wal
 	return store, nil
 }
 
@@ -106,6 +135,22 @@ func (s *Store) Get(key string) (string, error) {
 }
 
 func (s *Store) Put(key string, value string) error {
+	err := s.wal.Append(WalRecord{op: opPut, key: key, value: value})
+	if err != nil {
+		return err
+	}
+	err = s.applyPut(key, value)
+	if err != nil {
+		return err
+	}
+	err = s.wal.Truncate()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) applyPut(key string, value string) error {
 	pageID := s.superBlock.rootPageID
 	path := make([]uint64, 0)
 	for {
@@ -177,7 +222,6 @@ func (s *Store) Put(key string, value string) error {
 		}
 
 	}
-
 }
 
 func (s *Store) propagateUpdateToPath(leftPageID uint64, rightPageID uint64, propagationKey string, path []uint64) error {
@@ -267,11 +311,32 @@ func (s *Store) propagateUpdateToPath(leftPageID uint64, rightPageID uint64, pro
 }
 
 func (s *Store) Delete(key string) error {
+	err := s.wal.Append(WalRecord{op: opDelete, key: key})
+	if err != nil {
+		return err
+	}
+	err = s.applyDelete()
+	if err != nil {
+		return err
+	}
+
+	err = s.wal.Truncate()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) applyDelete() error {
 	return nil
 }
 
 func (s *Store) Close() error {
 	err := s.pager.Close()
+	if err != nil {
+		return err
+	}
+	err = s.wal.Close()
 	if err != nil {
 		return err
 	}

@@ -17,7 +17,7 @@ package btreestore
 //
 // The checksum lets recovery detect a "torn write" - a record that was
 // only partially flushed to disk when the process crashed. This is the
-// same class of problem every real WAL (Postgres, RocksDB, etc.) has to
+// same class of problem every real Wal (Postgres, RocksDB, etc.) has to
 // handle: a crash mid-write must never corrupt state, it should just
 // look like "that last write never happened".
 
@@ -43,17 +43,17 @@ type WalRecord struct {
 	value string // empty/unused for opDelete
 }
 
-// WAL wraps an append-only file used for durability.
-type WAL struct {
+// Wal wraps an append-only file used for durability.
+type Wal struct {
 	file *os.File
 }
 
-func OpenWAL(path string) (*WAL, error) {
+func OpenWAL(path string) (*Wal, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, err
 	}
-	return &WAL{file: f}, nil
+	return &Wal{file: f}, nil
 }
 
 // Append writes one record to the log and fsyncs before returning.
@@ -65,7 +65,7 @@ func OpenWAL(path string) (*WAL, error) {
 // spends a lot of effort batching/grouping fsyncs (group commit) to
 // amortize this cost. We do the naive thing here on purpose so you can
 // feel the cost: try commenting out the Sync() call and benchmark it.
-func (w *WAL) Append(rec WalRecord) error {
+func (w *Wal) Append(rec WalRecord) error {
 	buf := encodeRecord(rec)
 	if _, err := w.file.Write(buf); err != nil {
 		return err
@@ -73,7 +73,7 @@ func (w *WAL) Append(rec WalRecord) error {
 	return w.file.Sync()
 }
 
-func (w *WAL) AppendNoSync(rec WalRecord) error {
+func (w *Wal) AppendNoSync(rec WalRecord) error {
 	buf := encodeRecord(rec)
 	if _, err := w.file.Write(buf); err != nil {
 		return err
@@ -110,11 +110,11 @@ func encodeRecord(rec WalRecord) []byte {
 	return out
 }
 
-// Replay reads every valid record from the start of the log and calls
+// WalReplay reads every valid record from the start of the log and calls
 // fn for each one, in order. It stops (without error) the moment it
 // hits a short read or a checksum mismatch, since that's exactly what
 // a torn write from a mid-append crash looks like.
-func Replay(path string, fn func(WalRecord) error) error {
+func WalReplay(path string, fn func(WalRecord) error) error {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return nil
@@ -179,14 +179,14 @@ func decodeBody(body []byte) (WalRecord, error) {
 	return WalRecord{op: op, key: key, value: val}, nil
 }
 
-func (w *WAL) Close() error {
+func (w *Wal) Close() error {
 	return w.file.Close()
 }
 
-// Truncate replaces the WAL file with an empty one. Used after
+// Truncate replaces the Wal file with an empty one. Used after
 // compaction, once the current state has been safely snapshotted
 // elsewhere and the old log entries are no longer needed for recovery.
-func (w *WAL) Truncate() error {
+func (w *Wal) Truncate() error {
 	if err := w.file.Truncate(0); err != nil {
 		return err
 	}
