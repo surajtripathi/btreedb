@@ -10,7 +10,11 @@ import (
 )
 
 func createStoreWithData(path string, walPath string) (*Store, error) {
-	store, err := Open(path, walPath)
+	store, err := Open(StoreOptions{
+		DBPath:                 path,
+		WalPath:                walPath,
+		CheckpointingThreshold: 20,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +79,11 @@ func TestStore_PersistenceAcrossRestarts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	secondStore, err := Open(path, walPath)
+	secondStore, err := Open(StoreOptions{
+		DBPath:                 path,
+		WalPath:                walPath,
+		CheckpointingThreshold: 20,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +182,11 @@ func TestStore_TreeStructureAfterManyInserts(t *testing.T) {
 	dir := t.TempDir()
 	btreePath := filepath.Join(dir, "test.db")
 	walPath := filepath.Join(dir, "test.wal")
-	store, err := Open(btreePath, walPath)
+	store, err := Open(StoreOptions{
+		DBPath:                 btreePath,
+		WalPath:                walPath,
+		CheckpointingThreshold: 20,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +210,11 @@ func TestStore_TreeStructureAfterManyInserts(t *testing.T) {
 	}
 
 	// open store again
-	store, err = Open(btreePath, walPath)
+	store, err = Open(StoreOptions{
+		DBPath:                 btreePath,
+		WalPath:                walPath,
+		CheckpointingThreshold: 20,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +374,11 @@ func TestWalRecover(t *testing.T) {
 	dbPath := filepath.Join(dir, "test.db")
 	walPath := filepath.Join(dir, "test.wal")
 
-	store, err := Open(dbPath, walPath)
+	store, err := Open(StoreOptions{
+		DBPath:                 dbPath,
+		WalPath:                walPath,
+		CheckpointingThreshold: 20,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,7 +436,11 @@ func TestWalRecover(t *testing.T) {
 	}
 
 	// store.Open should re-apply the wal log
-	store, err = Open(dbPath, walPath)
+	store, err = Open(StoreOptions{
+		DBPath:                 dbPath,
+		WalPath:                walPath,
+		CheckpointingThreshold: 20,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -450,13 +474,25 @@ func TestWalRecover(t *testing.T) {
 	if err == nil || !errors.Is(err, NotFound) {
 		t.Fatalf("expected NotFound before replay, but got value %v and error %v", val, err)
 	}
-	err = store.Close()
+
+	// not calling store.close as it will run the check pointing truncate the wal record so crashKey2 wont be found
+	// in case of real crash checkpoint will not run so wal wont be truncated and crashKey2 will survive and reapplyied
+	// during store opening
+	err = store.pager.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.wal.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	//opening store should recover from wal
-	store, err = Open(dbPath, walPath)
+	store, err = Open(StoreOptions{
+		DBPath:                 dbPath,
+		WalPath:                walPath,
+		CheckpointingThreshold: 20,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -466,5 +502,132 @@ func TestWalRecover(t *testing.T) {
 	}
 	if val != crashVal2 {
 		t.Fatalf("expect %v, but got %v", crashVal2, val)
+	}
+}
+
+func TestWalMultiKeyRecovery(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	walPath := filepath.Join(dir, "test.wal")
+
+	store, err := Open(StoreOptions{
+		DBPath:                 dbPath,
+		WalPath:                walPath,
+		CheckpointingThreshold: 20,
+	})
+	store.checkPointing.threshold = 20
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	keys := make([]string, 0)
+	vals := make([]string, 0)
+
+	for i := 0; i < 15; i++ {
+		key := "a" + strconv.Itoa(i)
+		value := "a_value" + strconv.Itoa(i)
+		err = store.Put(key, value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys = append(keys, key)
+		vals = append(vals, value)
+	}
+
+	// not calling store.close as it will run the check pointing truncate the wal record so crashKey2 wont be found
+	// in case of real crash checkpoint will not run so wal wont be truncated and crashKey2 will survive and reapplyied
+	// during store opening
+	err = store.pager.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.wal.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// store.Open should re-apply the wal log, all 15
+	store, err = Open(StoreOptions{
+		DBPath:                 dbPath,
+		WalPath:                walPath,
+		CheckpointingThreshold: 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	td := &TestData{}
+	err = dumpTree(store, store.superBlock.rootPageID, 0, td)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	slices.Sort(keys)
+	slices.Sort(vals)
+
+	// it should not have duplicate key and values as they were successfully inserted
+	// so WalReply should be no op
+	if !reflect.DeepEqual(keys, td.leafKeys) {
+		t.Fatalf("expect %v, but got %v", keys, td.leafKeys)
+	}
+	if !reflect.DeepEqual(vals, td.leafValues) {
+		t.Fatalf("expect %v, but got %v", vals, td.leafValues)
+	}
+
+	// test wal ordering post crash recovery
+
+	err = store.Put("a", "a_value 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.Put("a", "a_value 2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.Put("a", "a_value 3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// db should only have the last value
+	keys = append(keys, "a")
+	vals = append(vals, "a_value 3")
+
+	// not calling store.close as it will run the check pointing truncate the wal record so crashKey2 wont be found
+	// in case of real crash checkpoint will not run so wal wont be truncated and crashKey2 will survive and reapplyied
+	// during store opening
+	err = store.pager.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.wal.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = Open(StoreOptions{
+		DBPath:                 dbPath,
+		WalPath:                walPath,
+		CheckpointingThreshold: 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	td = &TestData{}
+	err = dumpTree(store, store.superBlock.rootPageID, 0, td)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	slices.Sort(keys)
+	slices.Sort(vals)
+
+	// it should not have duplicate key and values as they were successfully inserted
+	// so WalReply should be no op
+	if !reflect.DeepEqual(keys, td.leafKeys) {
+		t.Fatalf("expect %v, but got %v", keys, td.leafKeys)
+	}
+	if !reflect.DeepEqual(vals, td.leafValues) {
+		t.Fatalf("expect %v, but got %v", vals, td.leafValues)
 	}
 }

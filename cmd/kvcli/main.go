@@ -36,8 +36,13 @@ func main() {
 
 	walPath := path.Join(dir, walPath)
 	btreePath := path.Join(dir, filePrefix+".btree")
+	const checkPointingThreshold = 100
 
-	store, err := btreestore.Open(btreePath, walPath)
+	store, err := btreestore.Open(btreestore.StoreOptions{
+		DBPath:                 btreePath,
+		WalPath:                walPath,
+		CheckpointingThreshold: checkPointingThreshold,
+	})
 	if err != nil {
 		fmt.Println("failed to open store:", err)
 		os.Exit(1)

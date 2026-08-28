@@ -6,17 +6,24 @@ import (
 )
 
 type Store struct {
-	pager      *Pager
-	superBlock *SuperBlockNode
-	wal        *Wal
+	pager         *Pager
+	superBlock    *SuperBlockNode
+	wal           *Wal
+	checkPointing *CheckPointing
+}
+
+type StoreOptions struct {
+	WalPath                string
+	DBPath                 string
+	CheckpointingThreshold int
 }
 
 const superBlockPageID = 0
 
 var NotFound = errors.New("not found")
 
-func Open(dbPath string, walPath string) (*Store, error) {
-	pager, err := newPager(dbPath)
+func Open(so StoreOptions) (*Store, error) {
+	pager, err := newPager(so.DBPath)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +74,7 @@ func Open(dbPath string, walPath string) (*Store, error) {
 		}
 		store.superBlock = superBlockNode
 	}
-	err = WalReplay(walPath, func(record WalRecord) error {
+	err = WalReplay(so.WalPath, func(record WalRecord) error {
 		switch record.op {
 		case opPut:
 			err := store.applyPut(record.key, record.value)
@@ -87,7 +94,7 @@ func Open(dbPath string, walPath string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	wal, err := OpenWAL(walPath)
+	wal, err := OpenWAL(so.WalPath)
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +103,7 @@ func Open(dbPath string, walPath string) (*Store, error) {
 		return nil, err
 	}
 	store.wal = wal
+	store.checkPointing = newCheckPointing(so.CheckpointingThreshold)
 	return store, nil
 }
 
@@ -143,9 +151,13 @@ func (s *Store) Put(key string, value string) error {
 	if err != nil {
 		return err
 	}
-	err = s.wal.Truncate()
-	if err != nil {
-		return err
+
+	s.checkPointing.incr()
+	if s.checkPointing.check() {
+		err = s.doCheckPointing()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -216,7 +228,7 @@ func (s *Store) applyPut(key string, value string) error {
 			} else {
 				return err
 			}
-			return s.pager.Sync()
+			return nil
 		default:
 			return errors.New("invalid page")
 		}
@@ -319,10 +331,12 @@ func (s *Store) Delete(key string) error {
 	if err != nil {
 		return err
 	}
-
-	err = s.wal.Truncate()
-	if err != nil {
-		return err
+	s.checkPointing.incr()
+	if s.checkPointing.check() {
+		err = s.doCheckPointing()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -331,8 +345,28 @@ func (s *Store) applyDelete() error {
 	return nil
 }
 
+func (s *Store) doCheckPointing() error {
+	// sync
+	err := s.pager.Sync()
+	if err != nil {
+		return err
+	}
+	// wal truncate
+	err = s.wal.Truncate()
+	if err != nil {
+		return err
+	}
+	// reset counter
+	s.checkPointing.reset()
+	return nil
+}
+
 func (s *Store) Close() error {
-	err := s.pager.Close()
+	err := s.doCheckPointing()
+	if err != nil {
+		return err
+	}
+	err = s.pager.Close()
 	if err != nil {
 		return err
 	}

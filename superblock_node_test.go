@@ -9,7 +9,11 @@ func TestSuperBlockEncodeDecode(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "btree.db")
 	walPath := filepath.Join(dir, "test.wal")
-	store, err := Open(dbPath, walPath)
+	store, err := Open(StoreOptions{
+		DBPath:                 dbPath,
+		WalPath:                walPath,
+		CheckpointingThreshold: 20,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +48,11 @@ func TestSuperBlockEncodeDecode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err = Open(dbPath, walPath)
+	store, err = Open(StoreOptions{
+		DBPath:                 dbPath,
+		WalPath:                walPath,
+		CheckpointingThreshold: 20,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
