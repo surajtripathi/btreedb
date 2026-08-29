@@ -520,3 +520,86 @@ func TestSplitLeaf(t *testing.T) {
 		}
 	}
 }
+
+func TestDelete_Key(t *testing.T) {
+	node := newLeafNode()
+
+	// pick keys/values, compute expected cellSize by hand for each
+	key1 := "hello1"
+	value1 := "value1"
+	_, err := node.insertLeaf(key1, value1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kvEncodedSize1 := kvLengthStoreSize + len(key1) + kvLengthStoreSize + len(value1)
+	freePageOffset := pageEnd - kvEncodedSize1
+	slotOffset := slotDirStart + 2
+
+	// second insert, recompute expected offsets from the first insert's result
+	key2 := "hello2"
+	value2 := "value2"
+	_, err = node.insertLeaf(key2, value2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kvEncodedSize2 := kvLengthStoreSize + len(key2) + kvLengthStoreSize + len(value2)
+	freePageOffset -= kvEncodedSize2
+	slotOffset += 2
+
+	// delete
+	ok, err := node.deleteLeaf(key2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatalf("key should be deleted")
+	}
+
+	slotOffset -= 2
+	freePageOffset += kvEncodedSize2
+
+	if node.freePageOffset != uint16(freePageOffset) {
+		t.Fatalf("freePageOffset = %d, expected %d", node.freePageOffset, freePageOffset)
+	}
+	if node.slotOffset != uint16(slotOffset) {
+		t.Fatalf("slotOffset = %d, expected %d", node.slotOffset, slotOffset)
+	}
+
+	// delete non existent key
+	key3 := "non-existent"
+	ok, err = node.deleteLeaf(key3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatalf("non-existent key should not be deleted")
+	}
+	// offsets should not change
+	if node.freePageOffset != uint16(freePageOffset) {
+		t.Fatalf("freePageOffset = %d, expected %d", node.freePageOffset, freePageOffset)
+	}
+	if node.slotOffset != uint16(slotOffset) {
+		t.Fatalf("slotOffset = %d, expected %d", node.slotOffset, slotOffset)
+	}
+
+	// check empty
+	ok, err = node.deleteLeaf(key1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatalf("key should be deleted")
+	}
+	slotOffset -= 2
+	freePageOffset += kvEncodedSize1
+
+	if node.freePageOffset != uint16(freePageOffset) {
+		t.Fatalf("freePageOffset = %d, expected %d", node.freePageOffset, freePageOffset)
+	}
+	if node.slotOffset != uint16(slotOffset) {
+		t.Fatalf("slotOffset = %d, expected %d", node.slotOffset, slotOffset)
+	}
+	if len(node.kv) != 0 {
+		t.Fatalf("node should be empty")
+	}
+}

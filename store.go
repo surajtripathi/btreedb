@@ -82,8 +82,8 @@ func Open(so StoreOptions) (*Store, error) {
 				return err
 			}
 		case opDelete:
-			err := store.Delete(record.key)
-			if err != nil {
+			err := store.applyDelete(record.key)
+			if err != nil && !errors.Is(err, NotFound) {
 				return err
 			}
 		default:
@@ -108,7 +108,7 @@ func Open(so StoreOptions) (*Store, error) {
 }
 
 func (s *Store) Get(key string) (string, error) {
-	node, err := s.findLeaf(key)
+	_, node, _, err := s.findLeaf(key)
 	if err != nil {
 		return "", err
 	}
@@ -119,39 +119,8 @@ func (s *Store) Get(key string) (string, error) {
 	return node.kv[index].value, nil
 }
 
-func (s *Store) findLeaf(key string) (*LeafNode, error) {
-	pageID := s.superBlock.rootPageID
-	for {
-		page, err := s.pager.readPage(pageID)
-		if err != nil {
-			return nil, err
-		}
-		switch nodeType(page) {
-		case InternalNodeType:
-			internalNode, err := decodeInternal(page)
-			if err != nil {
-				return nil, err
-			}
-			index := internalNode.searchInternal(key)
-			if index >= len(internalNode.children) {
-				return nil, errors.New(fmt.Sprintf("index %d out of range", index))
-			}
-			pageID = internalNode.children[index]
-		case LeafNodeType:
-			node, err := decodeLeaf(page)
-			if err != nil {
-				return nil, err
-			}
-
-			return node, nil
-		default:
-			return nil, errors.New("invalid page")
-		}
-	}
-}
-
 func (s *Store) RangeGet(start string, end string) ([]keyValue, error) {
-	node, err := s.findLeaf(start)
+	_, node, _, err := s.findLeaf(start)
 	if err != nil {
 		return nil, err
 	}
@@ -204,76 +173,84 @@ func (s *Store) Put(key string, value string) error {
 }
 
 func (s *Store) applyPut(key string, value string) error {
+
+	pageID, node, path, err := s.findLeaf(key)
+	if err != nil {
+		return err
+	}
+	ok, err := node.insertLeaf(key, value)
+	if ok {
+		encodedLeaf, err := node.encodeLeaf()
+		if err != nil {
+			return err
+		}
+		err = s.pager.writePage(encodedLeaf, pageID)
+		if err != nil {
+			return err
+		}
+	} else if errors.Is(err, ErrorOverFlow) {
+		l, r, pk, err := node.splitLeaf(key, value)
+		if err != nil {
+			return err
+		}
+		pkPageID := s.pager.allocatePage()
+		r.nextPageID = node.nextPageID
+		l.nextPageID = pkPageID
+		rightEncoded, err := r.encodeLeaf()
+		if err != nil {
+			return err
+		}
+		err = s.pager.writePage(rightEncoded, pkPageID)
+		if err != nil {
+			return err
+		}
+		leftEncoded, err := l.encodeLeaf()
+		if err != nil {
+			return err
+		}
+		err = s.pager.writePage(leftEncoded, pageID)
+		if err != nil {
+			return err
+		}
+		err = s.propagateUpdateToPath(pageID, pkPageID, pk, path)
+		if err != nil {
+			return err
+		}
+	} else {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) findLeaf(key string) (uint64, *LeafNode, []uint64, error) {
 	pageID := s.superBlock.rootPageID
 	path := make([]uint64, 0)
 	for {
 		page, err := s.pager.readPage(pageID)
 		if err != nil {
-			return err
+			return 0, nil, nil, err
 		}
 		switch nodeType(page) {
 		case InternalNodeType:
 			internalNode, err := decodeInternal(page)
 			if err != nil {
-				return err
+				return 0, nil, nil, err
 			}
 			index := internalNode.searchInternal(key)
 			if index >= len(internalNode.children) {
-				return errors.New(fmt.Sprintf("index %d out of range", index))
+				return 0, nil, nil, errors.New(fmt.Sprintf("index %d out of range", index))
 			}
 			path = append(path, pageID)
 			pageID = internalNode.children[index]
 		case LeafNodeType:
 			node, err := decodeLeaf(page)
 			if err != nil {
-				return err
+				return 0, nil, nil, err
 			}
-			ok, err := node.insertLeaf(key, value)
-			if ok {
-				encodedLeaf, err := node.encodeLeaf()
-				if err != nil {
-					return err
-				}
-				err = s.pager.writePage(encodedLeaf, pageID)
-				if err != nil {
-					return err
-				}
-			} else if errors.Is(err, ErrorOverFlow) {
-				l, r, pk, err := node.splitLeaf(key, value)
-				if err != nil {
-					return err
-				}
-				pkPageID := s.pager.allocatePage()
-				r.nextPageID = node.nextPageID
-				l.nextPageID = pkPageID
-				rightEncoded, err := r.encodeLeaf()
-				if err != nil {
-					return err
-				}
-				err = s.pager.writePage(rightEncoded, pkPageID)
-				if err != nil {
-					return err
-				}
-				leftEncoded, err := l.encodeLeaf()
-				if err != nil {
-					return err
-				}
-				err = s.pager.writePage(leftEncoded, pageID)
-				if err != nil {
-					return err
-				}
-				err = s.propagateUpdateToPath(pageID, pkPageID, pk, path)
-				if err != nil {
-					return err
-				}
-			} else {
-				return err
-			}
-			return nil
+			return pageID, node, path, nil
 		default:
-			return errors.New("invalid page")
+			return 0, nil, nil, errors.New("invalid page")
 		}
-
 	}
 }
 
@@ -368,7 +345,7 @@ func (s *Store) Delete(key string) error {
 	if err != nil {
 		return err
 	}
-	err = s.applyDelete()
+	err = s.applyDelete(key)
 	if err != nil {
 		return err
 	}
@@ -382,7 +359,28 @@ func (s *Store) Delete(key string) error {
 	return nil
 }
 
-func (s *Store) applyDelete() error {
+func (s *Store) applyDelete(key string) error {
+	// not implementing the underflow merge/borrow, so ignoring the path
+	pageID, node, _, err := s.findLeaf(key)
+	if err != nil {
+		return err
+	}
+	ok, err := node.deleteLeaf(key)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return NotFound
+	}
+
+	buff, err := node.encodeLeaf()
+	if err != nil {
+		return err
+	}
+	err = s.pager.writePage(buff, pageID)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 

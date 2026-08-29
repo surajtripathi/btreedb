@@ -187,6 +187,20 @@ func (ln *LeafNode) splitLeaf(neyKey string, newValue string) (*LeafNode, *LeafN
 	return leftNode, rightNode, promotedKey, nil
 }
 
+func (ln *LeafNode) deleteLeaf(key string) (bool, error) {
+	index, ok := ln.searchLeaf(key)
+	if !ok {
+		// key is not present so nothing to be deleted
+		return false, nil
+	}
+	// reduce the size
+	kv := ln.kv[index]
+	ln.kv = append(ln.kv[:index], ln.kv[index+1:]...)
+	ln.slotOffset -= 2
+	ln.freePageOffset += uint16(kvLengthStoreSize + len(kv.key) + kvLengthStoreSize + len(kv.value))
+	return true, nil
+}
+
 func decodeLeaf(page []byte) (*LeafNode, error) {
 
 	//pageType := byte(page[pageTypeStart])

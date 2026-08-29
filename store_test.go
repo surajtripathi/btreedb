@@ -718,3 +718,100 @@ func TestRangeGet(t *testing.T) {
 		t.Fatalf("expect %v, but got %v", keyValues, kv)
 	}
 }
+
+func TestDeleteIncludingWalRecover(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	walPath := filepath.Join(dir, "test.wal")
+
+	options := StoreOptions{
+		DBPath:                 dbPath,
+		WalPath:                walPath,
+		CheckpointingThreshold: 20,
+	}
+	store, err := Open(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	keys := make([]string, 0)
+	vals := make([]string, 0)
+
+	for i := 0; i < 100; i++ {
+		key := "a" + strconv.Itoa(i)
+		value := "a_value" + strconv.Itoa(i)
+		err = store.Put(key, value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys = append(keys, key)
+		vals = append(vals, value)
+	}
+	//basic deleted test
+	key := "a10"
+	expectedValue := "a_value10"
+	gotValue, err := store.Get(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expectedValue != gotValue {
+		t.Fatalf("expect %v, but got %v", expectedValue, gotValue)
+	}
+	err = store.Delete(key)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.Get(key)
+
+	if err == nil || !errors.Is(err, NotFound) {
+		t.Fatalf("expect %v, but got %v", NotFound, err)
+	}
+
+	crashDeleteKey := "crash-delete-key"
+	crashDeleteValue := "crash-delete-value"
+
+	err = store.Put(crashDeleteKey, crashDeleteValue)
+	if err != nil {
+		t.Fatalf("expect no error, but got %v", err)
+	}
+	//delete only wall , simulate crash
+	err = store.wal.Append(WalRecord{
+		op:  opDelete,
+		key: crashDeleteKey,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// only deleted in wal so get should return the value
+	get, err := store.Get(crashDeleteKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if get != crashDeleteValue {
+		t.Fatalf("expect %v, but got %v", expectedValue, get)
+	}
+	err = store.wal.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.pager.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// opening store should recover the delete op
+
+	store, err = Open(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// should be found as wal replay should recover the delete
+	_, err = store.Get(crashDeleteKey)
+	if err == nil || !errors.Is(err, NotFound) {
+		t.Fatalf("expect %v, but got %v", NotFound, err)
+	}
+}
