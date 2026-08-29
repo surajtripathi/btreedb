@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>btreedb — build log</title>
+    <style>
+        :root {
+            --bg: #0b1220;
+            --surface: #101a2e;
+            --surface-2: #0d1626;
+            --grid: #1c2a44;
+            --text: #dce4f0;
+            --text-dim: #7a8bab;
+            --text-faint: #4a5875;
+            --done: #5fd3a3;
+            --done-dim: #2a5245;
+            --active: #e8a33d;
+            --active-dim: #5a4423;
+            --pending: #3a4a6b;
+            --mono: 'IBM Plex Mono', 'SF Mono', Menlo, Consolas, monospace;
+            --sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            background-image:
+                    linear-gradient(var(--grid) 1px, transparent 1px),
+                    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+            background-size: 32px 32px;
+            background-attachment: fixed;
+            color: var(--text);
+            font-family: var(--sans);
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        a { color: inherit; }
+
+        .wrap {
+            max-width: 880px;
+            margin: 0 auto;
+            padding: 64px 24px 120px;
+        }
+
+        /* ---------- header ---------- */
+
+        header {
+            margin-bottom: 56px;
+        }
+
+        .eyebrow {
+            font-family: var(--mono);
+            font-size: 12px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--text-faint);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+
+        .eyebrow .dot {
+            width: 6px;
+            height: 6px;
+            background: var(--active);
+            border-radius: 50%;
+            box-shadow: 0 0 0 3px var(--active-dim);
+        }
+
+        h1 {
+            font-family: var(--mono);
+            font-size: clamp(28px, 4vw, 40px);
+            font-weight: 600;
+            margin: 0 0 12px;
+            letter-spacing: -0.01em;
+        }
+
+        h1 .path {
+            color: var(--text-dim);
+            font-weight: 400;
+        }
+
+        .subtitle {
+            color: var(--text-dim);
+            font-size: 15px;
+            max-width: 60ch;
+        }
+
+        /* ---------- superblock / progress ---------- */
+
+        .superblock {
+            margin-top: 32px;
+            border: 1px solid var(--grid);
+            background: var(--surface);
+            border-radius: 6px;
+            overflow: hidden;
+            font-family: var(--mono);
+            font-size: 12px;
+        }
+
+        .superblock-row {
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid var(--grid);
+        }
+        .superblock-row:last-child { border-bottom: none; }
+
+        .superblock-label {
+            width: 190px;
+            flex-shrink: 0;
+            padding: 10px 14px;
+            color: var(--text-faint);
+            border-right: 1px solid var(--grid);
+            background: var(--surface-2);
+        }
+
+        .superblock-value {
+            padding: 10px 14px;
+            color: var(--text);
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .bar {
+            flex: 1;
+            height: 6px;
+            background: var(--surface-2);
+            border-radius: 3px;
+            overflow: hidden;
+            max-width: 240px;
+        }
+        .bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--done), var(--done));
+            width: 40%;
+        }
+
+        /* ---------- page chain ---------- */
+
+        .chain {
+            position: relative;
+            margin-top: 48px;
+        }
+
+        .chain::before {
+            content: "";
+            position: absolute;
+            left: 27px;
+            top: 8px;
+            bottom: 8px;
+            width: 1px;
+            background: repeating-linear-gradient(
+                    to bottom,
+                    var(--grid) 0,
+                    var(--grid) 4px,
+                    transparent 4px,
+                    transparent 9px
+            );
+        }
+
+        .page {
+            position: relative;
+            display: grid;
+            grid-template-columns: 56px 1fr;
+            margin-bottom: 8px;
+        }
+
+        .page-id-col {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-top: 18px;
+        }
+
+        .page-id {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--bg);
+            background: var(--pending);
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            z-index: 1;
+        }
+
+        .page.status-done .page-id { background: var(--done); }
+        .page.status-active .page-id { background: var(--active); }
+
+        .arrow {
+            font-family: var(--mono);
+            color: var(--text-faint);
+            font-size: 11px;
+            margin-top: 4px;
+        }
+
+        .page-card {
+            background: var(--surface);
+            border: 1px solid var(--grid);
+            border-radius: 8px;
+            margin-bottom: 16px;
+            overflow: hidden;
+            transition: border-color 0.15s ease;
+        }
+
+        .page.status-active .page-card {
+            border-color: var(--active-dim);
+            box-shadow: 0 0 0 1px var(--active-dim), 0 8px 24px -12px rgba(232, 163, 61, 0.25);
+        }
+
+        .page-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 18px;
+            background: var(--surface-2);
+            border-bottom: 1px solid var(--grid);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .page-header-left {
+            display: flex;
+            align-items: baseline;
+            gap: 12px;
+            min-width: 0;
+        }
+
+        .step-num {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--text-faint);
+            flex-shrink: 0;
+        }
+
+        .step-title {
+            font-family: var(--mono);
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .status-pill {
+            font-family: var(--mono);
+            font-size: 10px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            padding: 3px 9px;
+            border-radius: 20px;
+            flex-shrink: 0;
+            white-space: nowrap;
+        }
+
+        .status-done .status-pill { background: var(--done-dim); color: var(--done); }
+        .status-active .status-pill { background: var(--active-dim); color: var(--active); }
+        .status-pending .status-pill { background: var(--surface-2); color: var(--text-faint); border: 1px solid var(--grid); }
+
+        .chevron {
+            font-family: var(--mono);
+            color: var(--text-faint);
+            font-size: 12px;
+            margin-left: 12px;
+            transition: transform 0.15s ease;
+            flex-shrink: 0;
+        }
+        .page.expanded .chevron { transform: rotate(90deg); }
+
+        .page-body {
+            display: none;
+            padding: 18px 18px 20px;
+        }
+        .page.expanded .page-body { display: block; }
+        .page-card.expanded .page-body { display: block; }
+        .page-card.expanded .chevron { transform: rotate(90deg); }
+
+        .body-desc {
+            font-size: 14px;
+            color: var(--text-dim);
+            margin: 0 0 14px;
+        }
+
+        .slots {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .slot {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            font-size: 13px;
+            padding: 7px 10px;
+            background: var(--surface-2);
+            border-radius: 5px;
+            border: 1px solid var(--grid);
+        }
+
+        .slot-offset {
+            font-family: var(--mono);
+            font-size: 10px;
+            color: var(--text-faint);
+            padding-top: 1px;
+            flex-shrink: 0;
+            width: 34px;
+        }
+
+        .slot.done .slot-mark { color: var(--done); }
+        .slot.pending .slot-mark { color: var(--text-faint); }
+
+        .slot-mark {
+            font-family: var(--mono);
+            flex-shrink: 0;
+            width: 14px;
+        }
+
+        .slot-text { color: var(--text); }
+        .slot.pending .slot-text { color: var(--text-dim); }
+
+        .tag {
+            display: inline-block;
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--text-faint);
+            background: var(--surface-2);
+            border: 1px solid var(--grid);
+            padding: 3px 8px;
+            border-radius: 4px;
+            margin-top: 14px;
+        }
+
+        /* ---------- footer ---------- */
+
+        footer {
+            margin-top: 64px;
+            padding-top: 24px;
+            border-top: 1px solid var(--grid);
+            font-family: var(--mono);
+            font-size: 12px;
+            color: var(--text-faint);
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        @media (max-width: 560px) {
+            .wrap { padding: 40px 16px 80px; }
+            .superblock-label { width: 130px; font-size: 11px; }
+            .step-title { font-size: 13px; }
+        }
+    </style>
+</head>
+<body>
+<div class="wrap">
+
+    <header>
+        <div class="eyebrow"><span class="dot" style="background: var(--done); box-shadow: 0 0 0 3px var(--done-dim);"></span> comparison project — complete</div>
+        <h1>btreedb <span class="path">/ build log</span></h1>
+        <p class="subtitle">A B-tree key-value store, built page by page in Go, benchmarked against the LSM-tree next to it. All ten steps done — full written comparison delivered.</p>
+
+        <div class="superblock">
+            <div class="superblock-row">
+                <div class="superblock-label">root_step</div>
+                <div class="superblock-value">done — Postgres source next</div>
+            </div>
+            <div class="superblock-row">
+                <div class="superblock-label">progress</div>
+                <div class="superblock-value">
+                    <div class="bar" style="max-width: 240px;"><div class="bar-fill" style="width: 100%;"></div></div>
+                    10 / 10 committed
+                </div>
+            </div>
+            <div class="superblock-row">
+                <div class="superblock-label">last_tag</div>
+                <div class="superblock-value">v1.0-benchmarks-comparison</div>
+            </div>
+        </div>
+    </header>
+
+    <div class="page-card expanded" style="margin-bottom: 32px; border-color: var(--active-dim);">
+        <div class="page-header" onclick="this.closest('.page-card').classList.toggle('expanded')" style="cursor: pointer;">
+            <div class="page-header-left">
+                <span class="step-num">known limitations</span>
+                <span class="step-title" style="font-size: 13px;">deferred, not forgotten</span>
+            </div>
+            <div style="display:flex; align-items:center;">
+                <span class="status-pill" style="background: var(--active-dim); color: var(--active);">5 open</span>
+                <span class="chevron">▶</span>
+            </div>
+        </div>
+        <div class="page-body">
+            <div class="slots">
+                <div class="slot pending"><span class="slot-offset">split</span><span class="slot-mark">!</span><span class="slot-text"><strong>Split is not crash-atomic across page writes.</strong> A leaf split writes the left half back to the original page and the right half to a new page, then propagates a parent update. A crash after the left/right writes land but before the parent (or superblock, for a root split) is updated leaves the right half's data unreachable — silent loss of previously-committed keys, not just the operation in flight. WAL replay alone does not fix this, since it only redoes the triggering operation, not data that was already durable before the split began. Real fix: never overwrite the original leaf's page until the entire split (new page + parent link) is fully durable, so the original stays a valid single source of truth until its replacement is confirmed safe.</span></div>
+                <div class="slot pending"><span class="slot-offset">keys</span><span class="slot-mark">!</span><span class="slot-text">A single key/value larger than roughly half a page can make a split still overflow, or fail to fit even in a fresh empty leaf/internal node. Not handled — encode() surfaces ErrorOverFlow rather than corrupting data, but Put won't give a clean "key too large" message in this case.</span></div>
+                <div class="slot pending"><span class="slot-offset">rebuild</span><span class="slot-mark">!</span><span class="slot-text">Every insert fully decodes and re-encodes the entire page rather than editing the slot directory and cell data in place. Correct and simple, but not what real slotted-page engines do at scale. Flagged as a concrete before/after optimization for the benchmark step, not fixed now.</span></div>
+                <div class="slot pending"><span class="slot-offset">n/n+1</span><span class="slot-mark">!</span><span class="slot-text">The invariant len(children) == len(keys)+1 on InternalNode is never explicitly validated — enforced by construction so far, but nothing rejects a malformed node if that ever breaks. Also: an even merged key count during splitInternal produces a slightly uneven (e.g. 2-1) split — correct, just not balanced.</span></div>
+                <div class="slot pending"><span class="slot-offset">delete</span><span class="slot-mark">!</span><span class="slot-text">Delete has no underflow handling — a leaf or internal node can shrink arbitrarily small (even to zero real entries) without merging with a sibling or borrowing from one. Correct, just not space-efficient. Real systems (Postgres included) often defer this too, via lazy delete + later vacuum/cleanup, rather than eager rebalancing on every delete.</span></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="chain" id="chain">
+
+        <!-- STEP 1 -->
+        <div class="page status-done" data-step="1">
+            <div class="page-id-col"><div class="page-id">01</div><div class="arrow">│</div></div>
+            <div class="page-card">
+                <div class="page-header" onclick="toggle(this)">
+                    <div class="page-header-left">
+                        <span class="step-num">step 01</span>
+                        <span class="step-title">Page format</span>
+                    </div>
+                    <div style="display:flex; align-items:center;">
+                        <span class="status-pill">v0.1</span>
+                        <span class="chevron">▶</span>
+                    </div>
+                </div>
+                <div class="page-body">
+                    <p class="body-desc">Fixed 4KB page, slotted-page layout. Header (type, key count, free space offset, next leaf ID), slot directory growing forward, cell data growing backward.</p>
+                    <div class="slots">
+                        <div class="slot done"><span class="slot-offset">0:13</span><span class="slot-mark">✓</span><span class="slot-text">Leaf header layout, byte-offset design</span></div>
+                        <div class="slot done"><span class="slot-offset">0:13</span><span class="slot-mark">✓</span><span class="slot-text">encode() / decode() for leaf pages</span></div>
+                        <div class="slot done"><span class="slot-offset">0:13</span><span class="slot-mark">✓</span><span class="slot-text">Round-trip tests: multi-entry, empty node, empty value, overflow</span></div>
+                    </div>
+                    <span class="tag">tag: v0.1-leaf-encode-decode</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- STEP 2 -->
+        <div class="page status-done" data-step="2">
+            <div class="page-id-col"><div class="page-id">02</div><div class="arrow">│</div></div>
+            <div class="page-card">
+                <div class="page-header" onclick="toggle(this)">
+                    <div class="page-header-left">
+                        <span class="step-num">step 02</span>
+                        <span class="step-title">In-memory node + basic ops</span>
+                    </div>
+                    <div style="display:flex; align-items:center;">
+                        <span class="status-pill">v0.2</span>
+                        <span class="chevron">▶</span>
+                    </div>
+                </div>
+                <div class="page-body">
+                    <p class="body-desc">Search and space-aware insert, operating purely on the sorted in-memory slice — no byte offsets involved.</p>
+                    <div class="slots">
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">search() via sort.Search, returns (index, found)</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">insert(): update-in-place with signed-delta space accounting</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">insert(): splice for new keys, maintains sort order</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Overflow rejected cleanly on both insert and update paths</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Offset bookkeeping (slotOffset, freePageOffset) tested exactly</span></div>
+                    </div>
+                    <span class="tag">tag: v0.2-leaf-search-insert</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- STEP 3 -->
+        <div class="page status-done" data-step="3">
+            <div class="page-id-col"><div class="page-id">03</div><div class="arrow">│</div></div>
+            <div class="page-card">
+                <div class="page-header" onclick="toggle(this)">
+                    <div class="page-header-left">
+                        <span class="step-num">step 03</span>
+                        <span class="step-title">Pager</span>
+                    </div>
+                    <div style="display:flex; align-items:center;">
+                        <span class="status-pill">v0.3</span>
+                        <span class="chevron">▶</span>
+                    </div>
+                </div>
+                <div class="page-body">
+                    <p class="body-desc">Raw page I/O against a real file. Owns nothing about keys, values, or trees — pure byte-range translation.</p>
+                    <div class="slots">
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">readPage / writePage via ReadAt / WriteAt (no O_APPEND)</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">allocatePage: sequential, gap-free, derived from file size</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Explicit Sync() / Close(), no fsync-per-write</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Rejects reads of unallocated page IDs</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Persistence across Pager instances, verified byte-exact</span></div>
+                    </div>
+                    <span class="tag">tag: v0.3-pager</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- STEP 4 -->
+        <div class="page status-done" data-step="4">
+            <div class="page-id-col"><div class="page-id">04</div><div class="arrow">│</div></div>
+            <div class="page-card">
+                <div class="page-header" onclick="toggle(this)">
+                    <div class="page-header-left">
+                        <span class="step-num">step 04</span>
+                        <span class="step-title">Store wiring (single leaf)</span>
+                    </div>
+                    <div style="display:flex; align-items:center;">
+                        <span class="status-pill">v0.4</span>
+                        <span class="chevron">▶</span>
+                    </div>
+                </div>
+                <div class="page-body">
+                    <p class="body-desc">Store = Pager + rootPageID. Real Get/Put against one root leaf, page 0 hardcoded as root until multi-page trees exist.</p>
+                    <div class="slots">
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Open(): fresh root on new file, existing root on reopen</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Get / Put fully wired through Pager + LeafNode</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">WAL deliberately deferred — caught a compounding-duplicate-record replay bug before it shipped</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">End-to-end tests: get/put, restart persistence, updates, overflow</span></div>
+                    </div>
+                    <span class="tag">tag: v0.4-store-single-leaf</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- STEP 5 -->
+        <div class="page status-done" data-step="5">
+            <div class="page-id-col"><div class="page-id">05</div><div class="arrow">│</div></div>
+            <div class="page-card">
+                <div class="page-header" onclick="toggle(this)">
+                    <div class="page-header-left">
+                        <span class="step-num">step 05</span>
+                        <span class="step-title">Page splits</span>
+                    </div>
+                    <div style="display:flex; align-items:center;">
+                        <span class="status-pill">v0.5i</span>
+                        <span class="chevron">▶</span>
+                    </div>
+                </div>
+                <div class="page-body">
+                    <p class="body-desc">The biggest step so far. Turned "one leaf pretending to be a tree" into a real, arbitrarily-deep multi-level B-tree — verified to 4 levels under 30k+ inserts, with structural invariants (equal leaf depth, children = keys+1) proven on the real post-cascade tree, not just hand-built fixtures.</p>
+                    <div class="slots">
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">InternalNode: slotted layout, items bundle key+child pointer (Postgres-style dummy first key for the n+1 asymmetry)</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">InternalNode.searchInternal — child selection via binary search</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">InternalNode.insertInternal — space-aware, new child always lands beside the one it split from</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">LeafNode.splitLeaf — combine + divide, promoted key stays in the right leaf (values only live in leaves)</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">InternalNode.splitInternal — middle key promoted and removed from both halves</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Store.Put: path-aware traversal, recursive split propagation up to and including a new root</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Superblock (page 0): persists rootPageID across restarts — fixes a real bug where a moved root was lost on reopen</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">dumpTree + structural invariant tests at 3,000+ inserts, verified across a full close/reopen cycle</span></div>
+                    </div>
+                    <span class="tag">tag: v0.5i-superblock (a–i, nine sub-milestones)</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- STEP 6 -->
+        <div class="page status-done" data-step="6">
+            <div class="page-id-col"><div class="page-id">06</div><div class="arrow">│</div></div>
+            <div class="page-card">
+                <div class="page-header" onclick="toggle(this)">
+                    <div class="page-header-left">
+                        <span class="step-num">step 06</span>
+                        <span class="step-title">WAL integration</span>
+                    </div>
+                    <div style="display:flex; align-items:center;">
+                        <span class="status-pill">v0.6</span>
+                        <span class="chevron">▶</span>
+                    </div>
+                </div>
+                <div class="page-body">
+                    <p class="body-desc">Reused the LSM-tree's WAL almost unchanged. The real work was correct replay semantics — the applyPut/applyDelete split identified and deferred back in step 4, finally built properly.</p>
+                    <div class="slots">
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Put/Delete: Append (syncs) → apply* (mutation + pager sync) → Truncate</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">applyPut/applyDelete: pure tree mutation, zero WAL awareness — replay never re-appends to its own log</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Open: replay runs against established tree state, before the live WAL handle attaches</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Fixed: WalReplay's error was previously dropped, silently swallowing a failed replay</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Truncate is a full clear — correct given every op still syncs the pager before truncating</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Test: two crash scenarios (applied-but-not-truncated, and written-but-never-applied), verified via full tree dump not spot-check Gets</span></div>
+                    </div>
+                    <span class="tag">tag: v0.6-wal-integration</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- STEP 7 -->
+        <div class="page status-done" data-step="7">
+            <div class="page-id-col"><div class="page-id">07</div><div class="arrow">│</div></div>
+            <div class="page-card">
+                <div class="page-header" onclick="toggle(this)">
+                    <div class="page-header-left">
+                        <span class="step-num">step 07</span>
+                        <span class="step-title">Checkpointing</span>
+                    </div>
+                    <div style="display:flex; align-items:center;">
+                        <span class="status-pill">v0.7</span>
+                        <span class="chevron">▶</span>
+                    </div>
+                </div>
+                <div class="page-body">
+                    <p class="body-desc">Pager syncing moved from per-operation to threshold-triggered. Normal-operation durability now rests entirely on the WAL record (already synced) rather than the page write — a real, deliberate shift in what "Put returned success" guarantees.</p>
+                    <div class="slots">
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">CheckPointing: configurable counter/threshold, incr-then-check ordering</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">applyPut/applyDelete no longer sync the pager on every call</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">doCheckPointing: sync pager → truncate WAL → reset counter</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Close() forces a final checkpoint — clean shutdown leaves nothing to replay</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Open takes StoreOptions{WalPath, DBPath, CheckpointingThreshold} — configurable at construction, not reached into after</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Tests: batched replay (15 pending records) proves multi-record replay works; same-key-updated-3x case proves replay order is correct, not just that some value survives</span></div>
+                    </div>
+                    <span class="tag">tag: v0.7-checkpointing</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- STEP 8 -->
+        <div class="page status-done" data-step="8">
+            <div class="page-id-col"><div class="page-id">08</div><div class="arrow">│</div></div>
+            <div class="page-card">
+                <div class="page-header" onclick="toggle(this)">
+                    <div class="page-header-left">
+                        <span class="step-num">step 08</span>
+                        <span class="step-title">Read path — range scans</span>
+                    </div>
+                    <div style="display:flex; align-items:center;">
+                        <span class="status-pill">v0.8</span>
+                        <span class="chevron">▶</span>
+                    </div>
+                </div>
+                <div class="page-body">
+                    <p class="body-desc">The payoff of nextPageID leaf-chaining, in place since step 1. Descend once, then walk sideways — no re-ascent through internal nodes.</p>
+                    <div class="slots">
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">findLeaf extracted from Get, shared root-to-leaf descent</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">RangeGet: searchLeaf's returned index used directly as scan start, correct whether start is an exact key or not</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Walk forward via nextPageID until a key > end, or chain ends (noNextPage sentinel, tied to page 0's superblock reservation)</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Tests: empty db, exact-boundary match, non-matching boundaries, full-tree-spanning range</span></div>
+                    </div>
+                    <span class="tag">tag: v0.8-range-scan</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- STEP 9 -->
+        <div class="page status-done" data-step="9">
+            <div class="page-id-col"><div class="page-id">09</div><div class="arrow">│</div></div>
+            <div class="page-card">
+                <div class="page-header" onclick="toggle(this)">
+                    <div class="page-header-left">
+                        <span class="step-num">step 09</span>
+                        <span class="step-title">Delete + underflow</span>
+                    </div>
+                    <div style="display:flex; align-items:center;">
+                        <span class="status-pill">v0.9</span>
+                        <span class="chevron">▶</span>
+                    </div>
+                </div>
+                <div class="page-body">
+                    <p class="body-desc">Real delete, no underflow merge/borrow — deferred deliberately, same as how Postgres lazily defers page reclamation to vacuum rather than eager rebalancing.</p>
+                    <div class="slots">
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">LeafNode.deleteLeaf: reverse of insert's space accounting, (found, error) return matching Get's NotFound pattern</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">applyDelete: pure mutation via findLeaf, zero WAL awareness</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">findLeaf consolidated: single descent shared by Get, Put, RangeGet, Delete</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Tests: exact offset bookkeeping, full Store.Delete round trip, WAL crash-recovery for delete</span></div>
+                    </div>
+                    <span class="tag">tag: v0.9-delete</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- STEP 10 -->
+        <div class="page status-done" data-step="10">
+            <div class="page-id-col"><div class="page-id">10</div></div>
+            <div class="page-card">
+                <div class="page-header" onclick="toggle(this)">
+                    <div class="page-header-left">
+                        <span class="step-num">step 10</span>
+                        <span class="step-title">Benchmarks + written comparison</span>
+                    </div>
+                    <div style="display:flex; align-items:center;">
+                        <span class="status-pill">v1.0</span>
+                        <span class="chevron">▶</span>
+                    </div>
+                </div>
+                <div class="page-body">
+                    <p class="body-desc">Full suite against kvstore (the LSM-tree). Headline finding: Get-miss is ~18x faster on the LSM-tree via its bloom filter — btreedb has no early-exit mechanism, hit and miss cost the same. Put allocations (256 vs 6 allocs/op) tell a truer story than near-identical wall-clock time. Range scans amortize well (5.6x cheaper per-entry at 5,000 vs 10 keys) — the clearest B-tree structural win, not benchmarked on the LSM side.</p>
+                    <div class="slots">
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Put/Get-hit/Get-miss/Delete/RangeGet benchmarks, fixed -benchtime=Nx methodology throughout</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Caught and fixed two benchmark artifacts: auto-scaled b.N hiding a real Put comparison, and mismatched key shapes producing a fake Get hit/miss gap</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Shallow-vs-deep tree Put comparison: allocation cost tracks entries-per-leaf, not tree depth — concrete evidence for the deferred full-rebuild optimization</span></div>
+                        <div class="slot done"><span class="slot-offset">·</span><span class="slot-mark">✓</span><span class="slot-text">Full written comparison against kvstore, with results table and explained findings, not just numbers</span></div>
+                    </div>
+                    <span class="tag">tag: v1.0-benchmarks-comparison</span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <footer>
+        <span>next_page_id → Postgres source</span>
+        <span>btreedb · Go 1.26.5 · 10/10 complete</span>
+    </footer>
+
+</div>
+
+<script>
+    function toggle(headerEl) {
+        headerEl.closest('.page').classList.toggle('expanded');
+    }
+</script>
+</body>
+</html>
