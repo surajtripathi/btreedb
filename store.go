@@ -108,36 +108,77 @@ func Open(so StoreOptions) (*Store, error) {
 }
 
 func (s *Store) Get(key string) (string, error) {
+	node, err := s.findLeaf(key)
+	if err != nil {
+		return "", err
+	}
+	index, ok := node.searchLeaf(key)
+	if !ok {
+		return "", NotFound
+	}
+	return node.kv[index].value, nil
+}
+
+func (s *Store) findLeaf(key string) (*LeafNode, error) {
 	pageID := s.superBlock.rootPageID
 	for {
 		page, err := s.pager.readPage(pageID)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		switch nodeType(page) {
 		case InternalNodeType:
 			internalNode, err := decodeInternal(page)
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 			index := internalNode.searchInternal(key)
 			if index >= len(internalNode.children) {
-				return "", errors.New(fmt.Sprintf("index %d out of range", index))
+				return nil, errors.New(fmt.Sprintf("index %d out of range", index))
 			}
 			pageID = internalNode.children[index]
 		case LeafNodeType:
 			node, err := decodeLeaf(page)
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 
-			index, ok := node.searchLeaf(key)
-			if !ok {
-				return "", NotFound
-			}
-			return node.kv[index].value, nil
+			return node, nil
 		default:
-			return "", errors.New("invalid page")
+			return nil, errors.New("invalid page")
+		}
+	}
+}
+
+func (s *Store) RangeGet(start string, end string) ([]keyValue, error) {
+	node, err := s.findLeaf(start)
+	if err != nil {
+		return nil, err
+	}
+	index, _ := node.searchLeaf(start)
+
+	data := make([]keyValue, 0)
+
+	i := index
+	for {
+		if i < len(node.kv) && node.kv[i].key <= end {
+			data = append(data, node.kv[i])
+			i++
+		} else if i == len(node.kv) && node.nextPageID != noNextPage {
+			// read next page, zero is default page id
+			// end page should be set it to zero
+			nextPage, err := s.pager.readPage(node.nextPageID)
+			if err != nil {
+				return nil, err
+			}
+			node, err = decodeLeaf(nextPage)
+			if err != nil {
+				return nil, err
+			}
+			// reset i
+			i = 0
+		} else {
+			return data, nil
 		}
 	}
 }

@@ -515,7 +515,6 @@ func TestWalMultiKeyRecovery(t *testing.T) {
 		WalPath:                walPath,
 		CheckpointingThreshold: 20,
 	})
-	store.checkPointing.threshold = 20
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -629,5 +628,93 @@ func TestWalMultiKeyRecovery(t *testing.T) {
 	}
 	if !reflect.DeepEqual(vals, td.leafValues) {
 		t.Fatalf("expect %v, but got %v", vals, td.leafValues)
+	}
+}
+
+func TestRangeGet(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	walPath := filepath.Join(dir, "test.wal")
+
+	store, err := Open(StoreOptions{
+		DBPath:                 dbPath,
+		WalPath:                walPath,
+		CheckpointingThreshold: 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// do range scan on empty db, should return zero result
+
+	kv, err := store.RangeGet("a", "z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kv) != 0 {
+		t.Fatalf("expect empty, but got %v", kv)
+	}
+
+	// do a range query on not empty db
+	keyValues := make([]keyValue, 0)
+
+	for i := 1000; i < 10000; i++ {
+		// large value, that gurantees the next page movement
+		key := baseKey + strconv.Itoa(i)
+		value := baseValue + strconv.Itoa(i)
+		err = store.Put(key, value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keyValues = append(keyValues, keyValue{key: key, value: value})
+	}
+
+	//slices.SortFunc(keyValues, func(a, b keyValue) int {
+	//	return cmp.Compare(a.value, b.value)
+	//})
+
+	// data exists in between, start matches with left most key, end matches with right most key
+	startIndex, endIndex := 9, 50
+	kv, err = store.RangeGet(keyValues[startIndex].key, keyValues[endIndex].key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kv) != len(keyValues[startIndex:endIndex+1]) {
+		t.Fatalf("expect %v, but got %v", keyValues[startIndex:endIndex+1], kv)
+	}
+	if !reflect.DeepEqual(kv, keyValues[startIndex:endIndex+1]) {
+		t.Fatalf("expect %v, but got %v", keyValues[startIndex:endIndex+1], kv)
+	}
+
+	// data exists in between, start does not match with left most key, end does not match with right most key
+	startIndex, endIndex = 50, 90
+
+	startKey := keyValues[startIndex].key + "0" // a10500
+	endKey := keyValues[endIndex].key + "0"     // a10900
+	kv, err = store.RangeGet(startKey, endKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kv) != len(keyValues[startIndex+1:endIndex+1]) {
+		t.Fatalf("expect %v, but got %v", keyValues[startIndex+1:endIndex+1], kv)
+	}
+	if !reflect.DeepEqual(kv, keyValues[startIndex+1:endIndex+1]) {
+		t.Fatalf("expect %v, but got %v", keyValues[startIndex+1:endIndex+1], kv)
+	}
+
+	// data does not exist in between of the tree, right key reaches beyond the db end,
+
+	startKey = "aaaaaa"
+	endKey = "zzzzzzz"
+
+	kv, err = store.RangeGet(startKey, endKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kv) != len(keyValues) {
+		t.Fatalf("expect %v, but got %v", keyValues, kv)
+	}
+	if !reflect.DeepEqual(kv, keyValues) {
+		t.Fatalf("expect %v, but got %v", keyValues, kv)
 	}
 }

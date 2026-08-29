@@ -62,10 +62,12 @@ type LeafNode struct {
 	freePageOffset uint16
 }
 
+const noNextPage = 0
+
 func newLeafNode() *LeafNode {
 	return &LeafNode{
 		kv:             make([]keyValue, 0),
-		nextPageID:     0,
+		nextPageID:     noNextPage,
 		slotOffset:     slotDirStart,
 		freePageOffset: pageEnd,
 	}
